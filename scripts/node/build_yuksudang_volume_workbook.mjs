@@ -109,40 +109,36 @@ async function main() {
     verticalAlignment: "center",
   };
   summarySheet.getRange("A3:F5").format.rowHeight = 24;
-  summarySheet.getRange("A6:M6").merge();
+  summarySheet.getRange("A6:I6").merge();
   summarySheet.getRange("A6").values = [["주의: 실제 검색 로그가 아니라 검색광고 API의 최근 30일 검색량을 DataLab 일별 ratio로 배분한 추정치입니다."]];
-  summarySheet.getRange("A6:M6").format = {
+  summarySheet.getRange("A6:I6").format = {
     fill: "#FFF2CC",
     font: { color: "#7F6000" },
     verticalAlignment: "center",
   };
-  summarySheet.getRange("A6:M6").format.rowHeight = 24;
+  summarySheet.getRange("A6:I6").format.rowHeight = 24;
 
   const summaryHeaders = [
     "매장명", "키워드구분", "키워드", "PC_30일검색량", "모바일_30일검색량",
-    "전체_30일검색량", "일간추정합계", "일평균", "최대검색일", "최대일간검색량",
-    "DataLab_ratio합", "상태", "오류사유",
+    "전체_30일검색량", "일평균", "최대검색일", "최대일간검색량",
   ];
   const summaryRows = result.keywords.map((row) => [
     row.store_name ?? "", row.slot ?? "", row.keyword ?? "", row.monthly_pc ?? null,
-    row.monthly_mobile ?? null, row.monthly_total ?? null, row.estimated_total ?? null,
-    row.daily_average ?? null, excelDate(row.peak_date), row.peak_volume ?? null,
-    row.ratio_sum ?? null, row.status ?? "", row.error_reason ?? "",
+    row.monthly_mobile ?? null, row.monthly_total ?? null, row.daily_average ?? null,
+    excelDate(row.peak_date), row.peak_volume ?? null,
   ]);
   const summaryStart = 7;
   summarySheet.getRangeByIndexes(summaryStart, 0, 1, summaryHeaders.length).values = [summaryHeaders];
   applyHeaderStyle(summarySheet.getRangeByIndexes(summaryStart, 0, 1, summaryHeaders.length));
   if (summaryRows.length) {
     summarySheet.getRangeByIndexes(summaryStart + 1, 0, summaryRows.length, summaryHeaders.length).values = summaryRows;
-    summarySheet.tables.add(`A${summaryStart + 1}:M${summaryStart + 1 + summaryRows.length}`, true, "KeywordSummaryTable");
-    summarySheet.getRange(`D${summaryStart + 2}:G${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "#,##0";
-    summarySheet.getRange(`H${summaryStart + 2}:H${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "#,##0.0";
-    summarySheet.getRange(`I${summaryStart + 2}:I${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "yyyy-mm-dd";
-    summarySheet.getRange(`J${summaryStart + 2}:J${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "#,##0";
-    summarySheet.getRange(`K${summaryStart + 2}:K${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "0.00";
-    addStatusFormatting(summarySheet, `L${summaryStart + 2}:L${summaryStart + 1 + summaryRows.length}`);
+    summarySheet.tables.add(`A${summaryStart + 1}:I${summaryStart + 1 + summaryRows.length}`, true, "KeywordSummaryTable");
+    summarySheet.getRange(`D${summaryStart + 2}:F${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "#,##0";
+    summarySheet.getRange(`G${summaryStart + 2}:G${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "#,##0.0";
+    summarySheet.getRange(`H${summaryStart + 2}:H${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "yyyy-mm-dd";
+    summarySheet.getRange(`I${summaryStart + 2}:I${summaryStart + 1 + summaryRows.length}`).format.numberFormat = "#,##0";
   }
-  setWidths(summarySheet, [24, 12, 24, 14, 16, 16, 14, 12, 14, 16, 15, 18, 36]);
+  setWidths(summarySheet, [24, 12, 24, 14, 16, 16, 12, 14, 16]);
   summarySheet.freezePanes.freezeRows(summaryStart + 1);
 
   const dailySheet = workbook.worksheets.add(dailyName);
@@ -150,26 +146,25 @@ async function main() {
   const dailyHeaders = [
     "매장명", "키워드구분", "키워드", "검색일", "PC_30일검색량", "모바일_30일검색량",
     "전체_30일검색량", "DataLab_ratio", "PC_일간추정량", "모바일_일간추정량",
-    "전체_일간추정량", "상태", "오류사유",
+    "전체_일간추정량",
   ];
   const dailyRows = result.daily_rows.map((row) => [
     row.store_name ?? "", row.slot ?? "", row.keyword ?? "", excelDate(row.search_date),
     row.monthly_pc ?? null, row.monthly_mobile ?? null, row.monthly_total ?? null,
     row.ratio ?? null, row.estimated_pc ?? null, row.estimated_mobile ?? null,
-    row.estimated_total ?? null, row.status ?? "", row.error_reason ?? "",
+    row.estimated_total ?? null,
   ]);
   dailySheet.getRangeByIndexes(0, 0, 1, dailyHeaders.length).values = [dailyHeaders];
   applyHeaderStyle(dailySheet.getRangeByIndexes(0, 0, 1, dailyHeaders.length));
   if (dailyRows.length) {
     dailySheet.getRangeByIndexes(1, 0, dailyRows.length, dailyHeaders.length).values = dailyRows;
-    dailySheet.tables.add(`A1:M${dailyRows.length + 1}`, true, "DailyVolumeTable");
+    dailySheet.tables.add(`A1:K${dailyRows.length + 1}`, true, "DailyVolumeTable");
     dailySheet.getRange(`D2:D${dailyRows.length + 1}`).format.numberFormat = "yyyy-mm-dd";
     dailySheet.getRange(`E2:G${dailyRows.length + 1}`).format.numberFormat = "#,##0";
     dailySheet.getRange(`H2:H${dailyRows.length + 1}`).format.numberFormat = "0.00";
     dailySheet.getRange(`I2:K${dailyRows.length + 1}`).format.numberFormat = "#,##0";
-    addStatusFormatting(dailySheet, `L2:L${dailyRows.length + 1}`);
   }
-  setWidths(dailySheet, [24, 12, 24, 13, 14, 16, 16, 14, 14, 16, 16, 18, 36]);
+  setWidths(dailySheet, [24, 12, 24, 13, 14, 16, 16, 14, 14, 16, 16]);
   dailySheet.freezePanes.freezeRows(1);
 
   const formulaErrors = await workbook.inspect({
@@ -191,13 +186,13 @@ async function main() {
   await savePreview(
     workbook,
     summaryName,
-    `A1:M${Math.min(summaryRows.length + summaryStart + 1, 48)}`,
+    `A1:I${Math.min(summaryRows.length + summaryStart + 1, 48)}`,
     path.join(args["preview-dir"], "summary.png"),
   );
   await savePreview(
     workbook,
     dailyName,
-    `A1:M${Math.min(dailyRows.length + 1, 61)}`,
+    `A1:K${Math.min(dailyRows.length + 1, 61)}`,
     path.join(args["preview-dir"], "daily.png"),
   );
   const output = await SpreadsheetFile.exportXlsx(workbook);

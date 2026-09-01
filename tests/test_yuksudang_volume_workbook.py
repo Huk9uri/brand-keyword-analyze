@@ -94,3 +94,50 @@ def test_builder_creates_result_workbook_and_previews(tmp_path: Path):
     assert output.exists() and output.stat().st_size > 0
     assert (preview_dir / "summary.png").is_file()
     assert (preview_dir / "daily.png").is_file()
+
+    inspection = subprocess.run(
+        [
+            str(NODE),
+            "--input-type=module",
+            "-e",
+            (
+                'import {FileBlob,SpreadsheetFile} from "@oai/artifact-tool";'
+                "const workbook=await SpreadsheetFile.importXlsx(await FileBlob.load(process.argv[1]));"
+                'const summary=workbook.worksheets.getItem("30일_키워드요약").getRange("A8:M8").values[0];'
+                'const daily=workbook.worksheets.getItem("30일_일간검색량").getRange("A1:M1").values[0];'
+                "console.log(JSON.stringify({summary,daily}));"
+            ),
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    headers = json.loads(inspection.stdout)
+    assert headers["summary"][:9] == [
+        "매장명",
+        "키워드구분",
+        "키워드",
+        "PC_30일검색량",
+        "모바일_30일검색량",
+        "전체_30일검색량",
+        "일평균",
+        "최대검색일",
+        "최대일간검색량",
+    ]
+    assert all(value is None for value in headers["summary"][9:])
+    assert headers["daily"][:11] == [
+        "매장명",
+        "키워드구분",
+        "키워드",
+        "검색일",
+        "PC_30일검색량",
+        "모바일_30일검색량",
+        "전체_30일검색량",
+        "DataLab_ratio",
+        "PC_일간추정량",
+        "모바일_일간추정량",
+        "전체_일간추정량",
+    ]
+    assert all(value is None for value in headers["daily"][11:])
