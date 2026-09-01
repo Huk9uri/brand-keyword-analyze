@@ -25,12 +25,15 @@ DEFAULT_NODE_MODULES = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="육수당 매장별 키워드 최근 30일 일간 검색량 추정"
+        description="매장별 키워드 최근 30일 일간 검색량 추정"
     )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--end-date", type=date.fromisoformat, default=date.today())
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--store")
+    parser.add_argument("--sheet")
+    parser.add_argument("--keyword-prefix")
+    parser.add_argument("--output-filename")
     parser.add_argument("--env-file", type=Path, default=REPO_ROOT / ".env")
     parser.add_argument("--node", type=Path, default=DEFAULT_NODE)
     parser.add_argument("--force-refresh", action="store_true")
@@ -99,6 +102,10 @@ def main() -> int:
     ]
     if args.store:
         extractor_args.extend(["--store", args.store])
+    if args.sheet:
+        extractor_args.extend(["--sheet", args.sheet])
+    if args.keyword_prefix:
+        extractor_args.extend(["--keyword-prefix", args.keyword_prefix])
     run_node(
         args.node,
         REPO_ROOT / "scripts/node/extract_yuksudang_keywords.mjs",
@@ -137,7 +144,8 @@ def main() -> int:
     write_json_atomic(results_json, result)
 
     output_xlsx = output_dir / (
-        f"육수당_매장별_키워드_30일_일간검색량_{args.end_date.isoformat()}.xlsx"
+        args.output_filename
+        or f"매장별_키워드_30일_일간검색량_{args.end_date.isoformat()}.xlsx"
     )
     preview_dir = output_dir / "previews"
     run_node(

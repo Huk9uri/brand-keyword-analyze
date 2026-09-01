@@ -28,36 +28,41 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const blob = await FileBlob.load(args.input);
   const workbook = await SpreadsheetFile.importXlsx(blob);
-  const sheetName = "육수당 키워드검색량0513";
+  const sheetName = args.sheet || "육수당 키워드검색량0513";
   const sheet = workbook.worksheets.getItem(sheetName);
   if (!sheet) throw new Error(`sheet not found: ${sheetName}`);
 
   const used = sheet.getUsedRange(true);
   if (!used) throw new Error(`sheet has no values: ${sheetName}`);
   const values = used.values;
-  const expectedHeaders = [
-    [0, "매장명"],
-    [13, "키워드1"],
-    [19, "키워드2"],
-    [25, "키워드3"],
-  ];
+  const headerRowIndex = args.sheet ? 0 : 1;
+  const headerRow = values[headerRowIndex] ?? [];
+  const keywordColumns = args["keyword-prefix"]
+    ? Array.from({ length: 5 }, (_, index) => {
+        const header = `${args["keyword-prefix"]}${index + 1}`;
+        return [headerRow.findIndex((value) => text(value) === header), header];
+      })
+    : [[13, "키워드1"], [19, "키워드2"], [25, "키워드3"]];
+  const storeColumn = args.sheet
+    ? headerRow.findIndex((value) => text(value) === "매장명")
+    : 0;
+  const expectedHeaders = [[storeColumn, "매장명"], ...keywordColumns];
   for (const [index, expected] of expectedHeaders) {
-    if (text(values[1]?.[index]) !== expected) {
-      throw new Error(`unexpected header at row 2 column ${index + 1}: expected ${expected}`);
+    if (index < 0 || text(headerRow[index]) !== expected) {
+      throw new Error(`unexpected header at row ${headerRowIndex + 1} column ${index + 1}: expected ${expected}`);
     }
   }
 
-  let stores = values.slice(2).flatMap((row, offset) => {
-    const storeName = text(row[0]);
+  let stores = values.slice(headerRowIndex + 1).flatMap((row, offset) => {
+    const storeName = text(row[storeColumn]);
     if (!storeName) return [];
     return [{
-      source_row: offset + 3,
+      source_row: offset + headerRowIndex + 2,
       store_name: storeName,
-      keywords: [
-        { slot: "keyword1", keyword: text(row[13]) },
-        { slot: "keyword2", keyword: text(row[19]) },
-        { slot: "keyword3", keyword: text(row[25]) },
-      ],
+      keywords: keywordColumns.map(([column], index) => ({
+        slot: `keyword${index + 1}`,
+        keyword: text(row[column]),
+      })),
     }];
   });
 
