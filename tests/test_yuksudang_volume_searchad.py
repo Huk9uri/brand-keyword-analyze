@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from scripts.yuksudang_volume.searchad import (
+    build_hint_keywords,
     build_signature,
     normalize_keyword,
     parse_keyword_rows,
@@ -27,6 +28,12 @@ def test_build_signature_is_stable():
 
 def test_normalize_keyword_removes_all_whitespace_and_case():
     assert normalize_keyword(" 문래 SK\tV1 Center ") == "문래skv1center"
+
+
+def test_build_hint_keywords_removes_invalid_whitespace():
+    assert build_hint_keywords(
+        ["문래동", "문래역", "문래 SK V1 center"]
+    ) == "문래동,문래역,문래skv1center"
 
 
 def test_parse_keyword_rows_preserves_low_volume_state():

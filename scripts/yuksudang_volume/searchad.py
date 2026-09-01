@@ -29,6 +29,10 @@ def normalize_keyword(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
+def build_hint_keywords(keywords: list[str]) -> str:
+    return ",".join(normalize_keyword(keyword) for keyword in keywords)
+
+
 def build_signature(
     timestamp: str,
     method: str,
@@ -123,7 +127,7 @@ class SearchAdClient:
     def _request(self, keywords: list[str]) -> dict:
         params = urlencode(
             {
-                "hintKeywords": ",".join(keywords),
+                "hintKeywords": build_hint_keywords(keywords),
                 "showDetail": "1",
             }
         )

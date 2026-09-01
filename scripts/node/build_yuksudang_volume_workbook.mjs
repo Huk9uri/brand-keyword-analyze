@@ -53,10 +53,10 @@ function addStatusFormatting(sheet, rangeAddress) {
   });
 }
 
-async function savePreview(workbook, sheetName, target) {
+async function savePreview(workbook, sheetName, range, target) {
   const preview = await workbook.render({
     sheetName,
-    autoCrop: "all",
+    range,
     scale: 1,
     format: "png",
   });
@@ -93,13 +93,14 @@ async function main() {
 
   const metadata = result.metadata ?? {};
   const counts = result.summary ?? {};
+  const displayVersion = String(metadata.model_version ?? "").split("-").at(-1);
   const collectedAt = metadata.collected_at
     ? `KST ${String(metadata.collected_at).replace("T", " ").slice(0, 19)}`
     : "";
   summarySheet.getRange("A3:F5").values = [
-    ["조회 기간", `${metadata.period_start ?? ""} ~ ${metadata.period_end ?? ""}`, "모델 버전", metadata.model_version ?? "", "수집시각", collectedAt],
+    ["조회 기간", `${metadata.period_start ?? ""} ~ ${metadata.period_end ?? ""}`, "모델 버전", displayVersion, "수집시각", collectedAt],
     ["원본 파일", path.basename(metadata.source_file ?? path.resolve(args.input)), "매장 수", counts.stores ?? 0, "성공 키워드", counts.success_keywords ?? 0],
-    ["실패 키워드", counts.failed_keywords ?? 0, "일간 행 수", counts.daily_rows ?? 0, "주의", "실제 검색 로그가 아닌 API 결합 추정치"],
+    ["실패 키워드", counts.failed_keywords ?? 0, "일간 행 수", counts.daily_rows ?? 0, "", ""],
   ];
   summarySheet.getRange("A3:F5").format = {
     fill: "#D9E2F3",
@@ -108,6 +109,14 @@ async function main() {
     verticalAlignment: "center",
   };
   summarySheet.getRange("A3:F5").format.rowHeight = 24;
+  summarySheet.getRange("A6:M6").merge();
+  summarySheet.getRange("A6").values = [["주의: 실제 검색 로그가 아니라 검색광고 API의 최근 30일 검색량을 DataLab 일별 ratio로 배분한 추정치입니다."]];
+  summarySheet.getRange("A6:M6").format = {
+    fill: "#FFF2CC",
+    font: { color: "#7F6000" },
+    verticalAlignment: "center",
+  };
+  summarySheet.getRange("A6:M6").format.rowHeight = 24;
 
   const summaryHeaders = [
     "매장명", "키워드구분", "키워드", "PC_30일검색량", "모바일_30일검색량",
@@ -179,8 +188,18 @@ async function main() {
 
   await fs.mkdir(path.dirname(path.resolve(args.output)), { recursive: true });
   await fs.mkdir(path.resolve(args["preview-dir"]), { recursive: true });
-  await savePreview(workbook, summaryName, path.join(args["preview-dir"], "summary.png"));
-  await savePreview(workbook, dailyName, path.join(args["preview-dir"], "daily.png"));
+  await savePreview(
+    workbook,
+    summaryName,
+    `A1:M${Math.min(summaryRows.length + summaryStart + 1, 48)}`,
+    path.join(args["preview-dir"], "summary.png"),
+  );
+  await savePreview(
+    workbook,
+    dailyName,
+    `A1:M${Math.min(dailyRows.length + 1, 61)}`,
+    path.join(args["preview-dir"], "daily.png"),
+  );
   const output = await SpreadsheetFile.exportXlsx(workbook);
   await output.save(args.output);
 }

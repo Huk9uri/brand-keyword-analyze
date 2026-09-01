@@ -114,7 +114,7 @@ class DataLabClient:
                         f"DataLab request failed with HTTP {error.code}"
                     ) from error
                 last_error = error
-            except URLError as error:
+            except (URLError, TimeoutError) as error:
                 last_error = error
 
             if attempt == len(delays) - 1:
