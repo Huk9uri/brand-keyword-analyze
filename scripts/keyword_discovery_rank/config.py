@@ -46,9 +46,9 @@ class CollectorConfig:
         required = (
             "DB_SERVER",
             "DB_PORT",
-            "DB_USER",
-            "DB_PASSWORD",
             "KEYWORD_DISCOVERY_DB_DATABASE",
+            "KEYWORD_DISCOVERY_DB_USER",
+            "KEYWORD_DISCOVERY_DB_PASSWORD",
         )
         missing = [key for key in required if not values.get(key, "").strip()]
         if missing:
@@ -62,8 +62,8 @@ class CollectorConfig:
             db_server=values["DB_SERVER"].strip(),
             db_port=_parse_positive_int(values["DB_PORT"], "DB_PORT"),
             db_database=values["KEYWORD_DISCOVERY_DB_DATABASE"].strip(),
-            db_user=values["DB_USER"].strip(),
-            db_password=values["DB_PASSWORD"].strip(),
+            db_user=values["KEYWORD_DISCOVERY_DB_USER"].strip(),
+            db_password=values["KEYWORD_DISCOVERY_DB_PASSWORD"].strip(),
             db_encrypt=_parse_bool(values.get("DB_ENCRYPT", "true"), "DB_ENCRYPT"),
             db_trust_server_certificate=_parse_bool(
                 values.get("DB_TRUST_SERVER_CERTIFICATE", "false"),
