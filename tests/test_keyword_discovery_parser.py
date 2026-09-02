@@ -64,3 +64,24 @@ def test_parser_returns_empty_search_for_explicit_no_result_page():
 
     assert parsed.results == ()
     assert (parsed.observed_result_count, parsed.result_end_reached) == (0, True)
+
+
+def test_parser_prefers_nonblank_detail_anchor_after_name_only_anchor():
+    page = SearchPage(
+        "https://example.test",
+        """
+        <li data-naver-place-card>
+          <a data-place-name>이름 전용 매장 링크</a>
+          <a data-place-detail href="https://m.place.naver.com/restaurant/123">상세 보기</a>
+        </li>
+        """,
+        "RESULTS",
+        1,
+        True,
+    )
+
+    parsed = DomResultParser().parse(page)
+
+    assert parsed.results[0].place_name == "이름 전용 매장 링크"
+    assert parsed.results[0].detail_url == "https://m.place.naver.com/restaurant/123"
+    assert parsed.results[0].place_id == "123"

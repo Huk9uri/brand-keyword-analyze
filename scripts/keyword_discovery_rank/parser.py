@@ -35,7 +35,7 @@ class DomResultParser:
             if not is_ad:
                 next_organic_rank += 1
 
-            link = card.select_one(DETAIL_LINK_SELECTOR)
+            link = _detail_link(card)
             detail_url = _attribute(link, "href")
             place_id = _attribute(card, "data-place-id") or _place_id_from_url(detail_url)
             results.append(
@@ -70,6 +70,14 @@ def _place_name(card: Tag, link: Tag | None) -> str:
     if link is not None:
         return link.get_text(" ", strip=True)
     return ""
+
+
+def _detail_link(card: Tag) -> Tag | None:
+    candidates = card.select(DETAIL_LINK_SELECTOR)
+    for candidate in candidates:
+        if _place_id_from_url(_attribute(candidate, "href")):
+            return candidate
+    return next((candidate for candidate in candidates if _attribute(candidate, "href")), None)
 
 
 def _optional_text(card: Tag, selector: str) -> str | None:
