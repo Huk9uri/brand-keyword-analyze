@@ -158,6 +158,83 @@ def test_database_dry_run_is_rejected_without_constructing_database_or_browser(
     assert "database source cannot be validated in dry-run mode" in errors.getvalue()
 
 
+def test_main_redacts_malformed_excel_loader_failure(
+    tmp_path: Path,
+):
+    malformed_input = tmp_path / "queries.txt"
+    malformed_input.write_text("not an Excel workbook: workbook-secret", encoding="utf-8")
+    errors = StringIO()
+
+    exit_code = cli.main(
+        ["--input", str(malformed_input)],
+        repo_root=tmp_path,
+        stderr=errors,
+    )
+
+    assert exit_code == 2
+    assert errors.getvalue() == "error=Excel input could not be loaded\n"
+    assert "workbook-secret" not in errors.getvalue()
+
+
+def test_main_redacts_database_task_query_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    query_file = tmp_path / "candidates.sql"
+    query_file.write_text("SELECT * FROM dbo.candidates", encoding="utf-8")
+    fake_config = config(tmp_path)
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: fake_config),
+    )
+
+    class FailingCursor:
+        def execute(self, query):
+            raise RuntimeError("query-secret")
+
+        def close(self):
+            pass
+
+    class FailingConnection:
+        def cursor(self):
+            return FailingCursor()
+
+        def close(self):
+            pass
+
+    connection = FailingConnection()
+    monkeypatch.setattr(cli, "_connect_database", lambda collector_config: connection)
+
+    class PreflightRepository:
+        def __init__(self, received_connection):
+            assert received_connection is connection
+
+        def ping(self):
+            return True
+
+        def close(self):
+            connection.close()
+
+    monkeypatch.setattr(cli, "SnapshotRepository", PreflightRepository)
+    monkeypatch.setattr(
+        cli,
+        "_make_browser_factory",
+        lambda collector_config: (_ for _ in ()).throw(AssertionError("browser created")),
+    )
+    errors = StringIO()
+
+    exit_code = cli.main(
+        ["--input", str(query_file), "--source", "database"],
+        repo_root=tmp_path,
+        stderr=errors,
+    )
+
+    assert exit_code == 2
+    assert errors.getvalue() == "error=database preflight or persistence failed\n"
+    assert "query-secret" not in errors.getvalue()
+
+
 def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_closes_resources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

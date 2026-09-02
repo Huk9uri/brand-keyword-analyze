@@ -152,7 +152,12 @@ def main(
 def load_tasks(args: argparse.Namespace, *, connection: Any | None = None) -> list[SearchTask]:
     if args.source == "excel":
         _require_input_file(args.input, "Excel input file")
-        return ExcelTaskSource(args.input).load()
+        try:
+            return ExcelTaskSource(args.input).load()
+        except InputValidationError:
+            raise
+        except Exception as exc:
+            raise CliError("Excel input could not be loaded") from exc
 
     _require_input_file(args.input, "SQL query file")
     if connection is None:
@@ -160,11 +165,16 @@ def load_tasks(args: argparse.Namespace, *, connection: Any | None = None) -> li
     query = args.input.read_text(encoding="utf-8")
     if not query.strip():
         raise CliError("SQL query file must not be empty")
-    cursor = connection.cursor()
     try:
-        return DatabaseTaskSource(cursor, query).load()
-    finally:
-        cursor.close()
+        cursor = connection.cursor()
+        try:
+            return DatabaseTaskSource(cursor, query).load()
+        finally:
+            cursor.close()
+    except InputValidationError:
+        raise
+    except Exception as exc:
+        raise RepositoryError("database task query failed") from exc
 
 
 _load_tasks = load_tasks

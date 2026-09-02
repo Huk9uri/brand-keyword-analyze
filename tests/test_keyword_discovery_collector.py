@@ -104,6 +104,15 @@ class FakeSession:
         return html_path, screenshot_path
 
 
+class EvidenceDamagedSession(FakeSession):
+    def save_evidence(self, directory: Path, *, html: str | None = None):
+        raise BrowserSessionError(
+            "screenshot session disconnected",
+            last_url=SEARCH_URL,
+            html=html or "",
+        )
+
+
 class FakeBrowserFactory:
     def __init__(self, sessions) -> None:
         self.sessions = deque(sessions)
@@ -258,6 +267,23 @@ def test_no_result_is_not_retried_and_has_no_evidence(tmp_path: Path):
     assert not (tmp_path / "artifacts").exists()
 
 
+def test_no_result_state_ignores_stale_result_cards_and_persists_zero_rows(tmp_path: Path):
+    html = SUCCESS_HTML + "<p>검색 결과가 없습니다.</p>"
+    page = SearchPage(SEARCH_URL, html, "NO_RESULT", 0, True)
+    session = FakeSession([page])
+    instance, _, repository = collector(tmp_path, [session])
+
+    summary = instance.run([task()], "run-stale-no-result")
+
+    snapshot, results = repository.saved[0]
+    assert snapshot.collect_status is CollectStatus.NO_RESULT
+    assert snapshot.observed_result_count == 0
+    assert snapshot.result_end_reached is True
+    assert results == ()
+    assert summary.status_counts == {CollectStatus.NO_RESULT: 1}
+    assert not (tmp_path / "artifacts").exists()
+
+
 def test_parser_structure_failure_is_not_retried_but_saves_evidence(tmp_path: Path):
     session = FakeSession([success_page(), success_page()])
     instance, _, repository = collector(tmp_path, [session], parser=RaisingParser())
@@ -286,6 +312,35 @@ def test_browser_session_damage_closes_and_recreates_session_before_retry(tmp_pa
     assert damaged.driver.quit_calls == 1
     assert replacement.driver.quit_calls == 1
     assert repository.saved[0][0].collect_status is CollectStatus.SUCCESS
+
+
+def test_evidence_session_damage_closes_and_recreates_before_next_same_profile_task(
+    tmp_path: Path,
+):
+    damaged = EvidenceDamagedSession(
+        [success_page(html=PARTIAL_HTML, observed=2), success_page()]
+    )
+    replacement = FakeSession([success_page()])
+    instance, factory, repository = collector(tmp_path, [damaged, replacement])
+
+    summary = instance.run(
+        [task(1), task(2, query="강남역 국밥")],
+        "run-evidence-session-damage",
+    )
+
+    assert summary.status_counts == {
+        CollectStatus.PARTIAL: 1,
+        CollectStatus.SUCCESS: 1,
+    }
+    assert len(factory.create_calls) == 2
+    assert damaged.search_calls == 1
+    assert damaged.driver.quit_calls == 1
+    assert replacement.search_calls == 1
+    assert replacement.driver.quit_calls == 1
+    assert [snapshot.collect_status for snapshot, _ in repository.saved] == [
+        CollectStatus.PARTIAL,
+        CollectStatus.SUCCESS,
+    ]
 
 
 def test_final_failure_does_not_prevent_next_distinct_task(tmp_path: Path):

@@ -174,6 +174,23 @@ class KeywordDiscoveryCollector:
                     continue
                 break
 
+            if page.state == "NO_RESULT" or _has_no_result_marker(page.html):
+                final_attempt = _FinalAttempt(
+                    snapshot=self._snapshot(
+                        task,
+                        task_key,
+                        run_id,
+                        status=CollectStatus.NO_RESULT,
+                        message=None,
+                        final_url=page.final_url,
+                        observed_result_count=0,
+                        result_end_reached=True,
+                    ),
+                    results=(),
+                    html=page.html,
+                )
+                break
+
             observed_count, end_reached = _result_progress(page.html)
             page = replace(
                 page,
@@ -323,7 +340,13 @@ class KeywordDiscoveryCollector:
                 pass
             evidence_message = f"evidence capture failed: {exc}"
             message = "; ".join(filter(None, (snapshot.collect_msg, evidence_message)))
-            return replace(final_attempt, snapshot=replace(snapshot, collect_msg=_capped(message)))
+            return replace(
+                final_attempt,
+                snapshot=replace(snapshot, collect_msg=_capped(message)),
+                session_damaged=(
+                    final_attempt.session_damaged or isinstance(exc, BrowserSessionError)
+                ),
+            )
         return final_attempt
 
     def _discard_session(self) -> None:
@@ -377,6 +400,11 @@ def _result_progress(html: str) -> tuple[int, bool]:
     if not result_end_reached:
         result_end_reached = any(marker in visible_text for marker in NO_RESULT_TEXTS)
     return observed_count, result_end_reached
+
+
+def _has_no_result_marker(html: str) -> bool:
+    visible_text = " ".join(BeautifulSoup(html or "", "html.parser").stripped_strings)
+    return any(marker in visible_text for marker in NO_RESULT_TEXTS)
 
 
 def _failure_identity(snapshot: SearchSnapshot) -> tuple[CollectStatus, str | None] | None:
