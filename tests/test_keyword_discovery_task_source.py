@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
 
 from scripts.keyword_discovery_rank.models import DeviceType, SourceType
 from scripts.keyword_discovery_rank.task_source import (
@@ -19,40 +18,64 @@ from scripts.keyword_discovery_rank.task_source import (
 HEADERS = ["검색어", "기준매장ID", "기준매장명", "조회위치명", "위도", "경도", "기기", "소스ID"]
 
 
-def _write_workbook(path, rows: list[list[object]]) -> None:
-    workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = "검색작업"
-    worksheet.append(HEADERS)
-    for row in rows:
-        worksheet.append(row)
-    workbook.save(path)
+class _FakeWorksheet:
+    def __init__(self, rows: list[list[object]]) -> None:
+        self._rows = [tuple(row) for row in rows]
+
+    def iter_rows(self, *, values_only: bool):
+        assert values_only is True
+        yield from self._rows
 
 
-def test_excel_source_defaults_device_normalizes_query_and_builds_stable_task_key(tmp_path):
-    workbook_path = tmp_path / "queries.xlsx"
-    _write_workbook(
-        workbook_path,
+class _FakeWorkbook:
+    def __init__(self, rows: list[list[object]]) -> None:
+        self.sheetnames = ["검색작업"]
+        self.active = _FakeWorksheet(rows)
+        self.closed = False
+
+    def __getitem__(self, sheet_name: str) -> _FakeWorksheet:
+        assert sheet_name == "검색작업"
+        return self.active
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _mock_excel_workbook(monkeypatch: pytest.MonkeyPatch, rows: list[list[object]]) -> _FakeWorkbook:
+    workbook = _FakeWorkbook([HEADERS, *rows])
+
+    def fake_load_workbook(path, *, read_only: bool, data_only: bool):
+        assert read_only is True
+        assert data_only is True
+        return workbook
+
+    monkeypatch.setattr("scripts.keyword_discovery_rank.task_source.load_workbook", fake_load_workbook)
+    return workbook
+
+
+def test_excel_source_defaults_device_normalizes_query_and_builds_stable_task_key(monkeypatch):
+    workbook = _mock_excel_workbook(
+        monkeypatch,
         [["  선릉역\n  국밥  ", "S1", "육수당 선릉점", "선릉점", 37.5048, 127.0489, None, None]],
     )
 
-    task = ExcelTaskSource(workbook_path).load()[0]
+    task = ExcelTaskSource("queries.xlsx").load()[0]
 
     assert task.query == "선릉역 국밥"
     assert task.device_type is DeviceType.MOBILE
     assert task.source_type is SourceType.EXCEL
     assert task.source_id == "excel-row-2"
     assert task.task_id == "excel-row-2"
+    assert workbook.closed is True
     assert normalize_query("  선릉역\n  국밥  ") == "선릉역 국밥"
     assert build_task_key(task) == hashlib.sha256(
         "선릉역 국밥|S1|37.5048000|127.0489000|MOBILE".encode("utf-8")
     ).hexdigest()
 
 
-def test_excel_source_reports_all_row_numbered_validation_errors(tmp_path):
-    workbook_path = tmp_path / "invalid.xlsx"
-    _write_workbook(
-        workbook_path,
+def test_excel_source_reports_all_row_numbered_validation_errors(monkeypatch):
+    _mock_excel_workbook(
+        monkeypatch,
         [
             ["", "S1", "육수당 선릉점", "선릉점", 91, 127.0489, "tablet", None],
             ["국밥", "", "", "", "not-a-number", 181, "PC", "source-4"],
@@ -60,7 +83,7 @@ def test_excel_source_reports_all_row_numbered_validation_errors(tmp_path):
     )
 
     with pytest.raises(InputValidationError) as exc_info:
-        ExcelTaskSource(workbook_path).load()
+        ExcelTaskSource("invalid.xlsx").load()
 
     message = str(exc_info.value)
     assert "row 2" in message
@@ -73,17 +96,16 @@ def test_excel_source_reports_all_row_numbered_validation_errors(tmp_path):
     assert "latitude must be a number" in message
 
 
-def test_excel_source_keeps_first_row_for_duplicate_task_keys(tmp_path):
-    workbook_path = tmp_path / "duplicates.xlsx"
-    _write_workbook(
-        workbook_path,
+def test_excel_source_keeps_first_row_for_duplicate_task_keys(monkeypatch):
+    _mock_excel_workbook(
+        monkeypatch,
         [
             ["선릉역 국밥", "S1", "육수당 선릉점", "선릉점", 37.5048, 127.0489, "MOBILE", "first"],
             ["  선릉역   국밥 ", "S1", "다른 표시명", "다른 위치", 37.5048, 127.0489, "MOBILE", "second"],
         ],
     )
 
-    tasks = ExcelTaskSource(workbook_path).load()
+    tasks = ExcelTaskSource("duplicates.xlsx").load()
 
     assert len(tasks) == 1
     assert tasks[0].source_id == "first"
