@@ -1,8 +1,16 @@
+import os
 from pathlib import Path
 
 import pytest
 
 from scripts.keyword_discovery_rank.config import CollectorConfig, ConfigError
+
+
+@pytest.fixture(autouse=True)
+def clear_collector_environment(monkeypatch: pytest.MonkeyPatch):
+    for name in tuple(os.environ):
+        if name.startswith("DB_") or name.startswith("KEYWORD_DISCOVERY_"):
+            monkeypatch.delenv(name)
 
 
 def write_env(repo_root: Path, **overrides: str) -> Path:
