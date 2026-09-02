@@ -67,15 +67,15 @@ IF EXISTS (
     SELECT 1
     FROM @expected_columns AS expected
     LEFT JOIN sys.tables AS tables
-      ON tables.name = expected.table_name
+      ON tables.name COLLATE DATABASE_DEFAULT = expected.table_name
      AND SCHEMA_NAME(tables.schema_id) = N'dbo'
     LEFT JOIN sys.columns AS columns
       ON columns.object_id = tables.object_id
-     AND columns.name = expected.column_name
+     AND columns.name COLLATE DATABASE_DEFAULT = expected.column_name
     LEFT JOIN sys.types AS types
       ON types.user_type_id = columns.user_type_id
     WHERE columns.column_id IS NULL
-       OR types.name <> expected.type_name
+       OR types.name COLLATE DATABASE_DEFAULT <> expected.type_name
        OR columns.max_length <> expected.max_length
        OR columns.precision <> expected.precision_value
        OR columns.scale <> expected.scale_value
@@ -89,8 +89,8 @@ IF EXISTS (
     FROM sys.tables AS tables
     JOIN sys.columns AS columns ON columns.object_id = tables.object_id
     LEFT JOIN @expected_columns AS expected
-      ON expected.table_name = tables.name
-     AND expected.column_name = columns.name
+      ON expected.table_name = tables.name COLLATE DATABASE_DEFAULT
+     AND expected.column_name = columns.name COLLATE DATABASE_DEFAULT
     WHERE SCHEMA_NAME(tables.schema_id) = N'dbo'
       AND tables.name IN (N'naver_keyword_discovery_snapshot', N'naver_keyword_discovery_result')
       AND expected.column_name IS NULL
@@ -114,13 +114,13 @@ IF EXISTS (
     SELECT 1
     FROM @expected_key_constraints AS expected
     LEFT JOIN sys.tables AS tables
-      ON tables.name = expected.table_name
+      ON tables.name COLLATE DATABASE_DEFAULT = expected.table_name
      AND SCHEMA_NAME(tables.schema_id) = N'dbo'
     LEFT JOIN sys.key_constraints AS key_constraints
       ON key_constraints.parent_object_id = tables.object_id
-     AND key_constraints.name = expected.constraint_name
+     AND key_constraints.name COLLATE DATABASE_DEFAULT = expected.constraint_name
     WHERE key_constraints.object_id IS NULL
-       OR key_constraints.type <> expected.constraint_type
+       OR key_constraints.type COLLATE DATABASE_DEFAULT <> expected.constraint_type
 )
     THROW 51000, 'Keyword discovery key constraint mismatch.', 1;
 
@@ -129,8 +129,8 @@ IF EXISTS (
     FROM sys.key_constraints AS key_constraints
     JOIN sys.tables AS tables ON tables.object_id = key_constraints.parent_object_id
     LEFT JOIN @expected_key_constraints AS expected
-      ON expected.table_name = tables.name
-     AND expected.constraint_name = key_constraints.name
+      ON expected.table_name = tables.name COLLATE DATABASE_DEFAULT
+     AND expected.constraint_name = key_constraints.name COLLATE DATABASE_DEFAULT
     WHERE SCHEMA_NAME(tables.schema_id) = N'dbo'
       AND tables.name IN (N'naver_keyword_discovery_snapshot', N'naver_keyword_discovery_result')
       AND expected.constraint_name IS NULL
@@ -160,17 +160,17 @@ IF EXISTS (
     SELECT 1
     FROM @expected_foreign_keys AS expected
     LEFT JOIN sys.tables AS tables
-      ON tables.name = expected.table_name
+      ON tables.name COLLATE DATABASE_DEFAULT = expected.table_name
      AND SCHEMA_NAME(tables.schema_id) = N'dbo'
     LEFT JOIN sys.foreign_keys AS foreign_keys
       ON foreign_keys.parent_object_id = tables.object_id
-     AND foreign_keys.name = expected.constraint_name
+     AND foreign_keys.name COLLATE DATABASE_DEFAULT = expected.constraint_name
     LEFT JOIN sys.tables AS referenced_tables
       ON referenced_tables.object_id = foreign_keys.referenced_object_id
      AND SCHEMA_NAME(referenced_tables.schema_id) = N'dbo'
     OUTER APPLY (
         SELECT STUFF((
-            SELECT N',' + parent_columns.name
+            SELECT N',' + (parent_columns.name COLLATE DATABASE_DEFAULT)
             FROM sys.foreign_key_columns AS foreign_key_columns
             JOIN sys.columns AS parent_columns
               ON parent_columns.object_id = foreign_key_columns.parent_object_id
@@ -182,7 +182,7 @@ IF EXISTS (
     ) AS actual_parent
     OUTER APPLY (
         SELECT STUFF((
-            SELECT N',' + referenced_columns.name
+            SELECT N',' + (referenced_columns.name COLLATE DATABASE_DEFAULT)
             FROM sys.foreign_key_columns AS foreign_key_columns
             JOIN sys.columns AS referenced_columns
               ON referenced_columns.object_id = foreign_key_columns.referenced_object_id
@@ -193,9 +193,9 @@ IF EXISTS (
         ).value(N'.', N'nvarchar(max)'), 1, 1, N'') AS referenced_columns
     ) AS actual_referenced
     WHERE foreign_keys.object_id IS NULL
-       OR ISNULL(referenced_tables.name, N'') <> expected.referenced_table_name
-       OR ISNULL(actual_parent.parent_columns, N'') <> expected.parent_columns
-       OR ISNULL(actual_referenced.referenced_columns, N'') <> expected.referenced_columns
+       OR ISNULL(referenced_tables.name COLLATE DATABASE_DEFAULT, N'') <> expected.referenced_table_name
+       OR ISNULL(actual_parent.parent_columns COLLATE DATABASE_DEFAULT, N'') <> expected.parent_columns
+       OR ISNULL(actual_referenced.referenced_columns COLLATE DATABASE_DEFAULT, N'') <> expected.referenced_columns
 )
     THROW 51000, 'Keyword discovery foreign key definition mismatch.', 1;
 
@@ -204,8 +204,8 @@ IF EXISTS (
     FROM sys.foreign_keys AS foreign_keys
     JOIN sys.tables AS tables ON tables.object_id = foreign_keys.parent_object_id
     LEFT JOIN @expected_foreign_keys AS expected
-      ON expected.table_name = tables.name
-     AND expected.constraint_name = foreign_keys.name
+      ON expected.table_name = tables.name COLLATE DATABASE_DEFAULT
+     AND expected.constraint_name = foreign_keys.name COLLATE DATABASE_DEFAULT
     WHERE SCHEMA_NAME(tables.schema_id) = N'dbo'
       AND tables.name IN (N'naver_keyword_discovery_snapshot', N'naver_keyword_discovery_result')
       AND expected.constraint_name IS NULL
@@ -242,15 +242,15 @@ IF EXISTS (
         FROM @expected_checks
     ) AS expected
     LEFT JOIN sys.tables AS tables
-      ON tables.name = expected.table_name
+      ON tables.name COLLATE DATABASE_DEFAULT = expected.table_name
      AND SCHEMA_NAME(tables.schema_id) = N'dbo'
     LEFT JOIN sys.check_constraints AS check_constraints
       ON check_constraints.parent_object_id = tables.object_id
-     AND check_constraints.name = expected.constraint_name
+     AND check_constraints.name COLLATE DATABASE_DEFAULT = expected.constraint_name
     OUTER APPLY (
         SELECT LOWER(
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                check_constraints.definition,
+                check_constraints.definition COLLATE DATABASE_DEFAULT,
                 N'[', N''),
                 N']', N''),
                 N'(', N''),
@@ -267,7 +267,7 @@ IF EXISTS (
             FROM @expected_checks AS alternative
             WHERE alternative.table_name = expected.table_name
               AND alternative.constraint_name = expected.constraint_name
-              AND alternative.normalized_definition = actual_check.normalized_definition
+              AND alternative.normalized_definition = actual_check.normalized_definition COLLATE DATABASE_DEFAULT
        )
 )
     THROW 51000, 'Keyword discovery check constraint definition mismatch.', 1;
@@ -280,8 +280,8 @@ IF EXISTS (
         SELECT DISTINCT table_name, constraint_name
         FROM @expected_checks
     ) AS expected
-      ON expected.table_name = tables.name
-     AND expected.constraint_name = check_constraints.name
+      ON expected.table_name = tables.name COLLATE DATABASE_DEFAULT
+     AND expected.constraint_name = check_constraints.name COLLATE DATABASE_DEFAULT
     WHERE SCHEMA_NAME(tables.schema_id) = N'dbo'
       AND tables.name IN (N'naver_keyword_discovery_snapshot', N'naver_keyword_discovery_result')
       AND expected.constraint_name IS NULL
@@ -327,14 +327,14 @@ IF EXISTS (
     SELECT 1
     FROM @expected_indexes AS expected
     LEFT JOIN sys.tables AS tables
-      ON tables.name = expected.table_name
+      ON tables.name COLLATE DATABASE_DEFAULT = expected.table_name
      AND SCHEMA_NAME(tables.schema_id) = N'dbo'
     LEFT JOIN sys.indexes AS indexes
       ON indexes.object_id = tables.object_id
-     AND indexes.name = expected.index_name
+     AND indexes.name COLLATE DATABASE_DEFAULT = expected.index_name
     OUTER APPLY (
         SELECT STUFF((
-            SELECT N',' + columns.name
+            SELECT N',' + (columns.name COLLATE DATABASE_DEFAULT)
             FROM sys.index_columns AS index_columns
             JOIN sys.columns AS columns
               ON columns.object_id = index_columns.object_id
@@ -349,7 +349,7 @@ IF EXISTS (
     OUTER APPLY (
         SELECT LOWER(
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                indexes.filter_definition,
+                indexes.filter_definition COLLATE DATABASE_DEFAULT,
                 N'[', N''),
                 N']', N''),
                 N'(', N''),
@@ -362,8 +362,8 @@ IF EXISTS (
        OR indexes.is_primary_key <> expected.is_primary_key
        OR indexes.is_unique_constraint <> expected.is_unique_constraint
        OR indexes.has_filter <> expected.has_filter
-       OR ISNULL(actual_filter.normalized_filter, N'') <> ISNULL(expected.normalized_filter, N'')
-       OR ISNULL(actual_keys.key_columns, N'') <> expected.key_columns
+       OR ISNULL(actual_filter.normalized_filter COLLATE DATABASE_DEFAULT, N'') <> ISNULL(expected.normalized_filter, N'')
+       OR ISNULL(actual_keys.key_columns COLLATE DATABASE_DEFAULT, N'') <> expected.key_columns
 )
     THROW 51000, 'Keyword discovery index definition mismatch.', 1;
 
@@ -372,8 +372,8 @@ IF EXISTS (
     FROM sys.indexes AS indexes
     JOIN sys.tables AS tables ON tables.object_id = indexes.object_id
     LEFT JOIN @expected_indexes AS expected
-      ON expected.table_name = tables.name
-     AND expected.index_name = indexes.name
+      ON expected.table_name = tables.name COLLATE DATABASE_DEFAULT
+     AND expected.index_name = indexes.name COLLATE DATABASE_DEFAULT
     WHERE SCHEMA_NAME(tables.schema_id) = N'dbo'
       AND tables.name IN (N'naver_keyword_discovery_snapshot', N'naver_keyword_discovery_result')
       AND indexes.index_id > 0

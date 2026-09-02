@@ -240,6 +240,28 @@ def test_verify_script_checks_exact_constraint_and_index_definitions():
         assert f"n'{sql_definition}'" in verify_sql
 
 
+def test_verify_script_normalizes_catalog_collations_to_database_default():
+    verify_sql = _normalized(VERIFY_SQL)
+
+    for catalog_expression in (
+        "tables.name",
+        "columns.name",
+        "types.name",
+        "key_constraints.name",
+        "key_constraints.type",
+        "foreign_keys.name",
+        "referenced_tables.name",
+        "actual_parent.parent_columns",
+        "actual_referenced.referenced_columns",
+        "check_constraints.name",
+        "actual_check.normalized_definition",
+        "indexes.name",
+        "actual_filter.normalized_filter",
+        "actual_keys.key_columns",
+    ):
+        assert f"{catalog_expression} collate database_default" in verify_sql
+
+
 def test_schema_files_do_not_reference_legacy_table_or_unapproved_columns():
     sql = f"{_normalized(CREATE_SQL)} {_normalized(VERIFY_SQL)}"
 
