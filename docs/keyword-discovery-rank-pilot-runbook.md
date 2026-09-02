@@ -6,9 +6,11 @@ database. Do not start the persistence pilot from CI or unattended automation.
 
 ## Environment and input preparation
 
-1. Create the scope-specific workbooks named in [Pilot datasets](#pilot-datasets)
-   from `inputs/keyword_discovery_queries.example.xlsx`. Use the `검색작업`
-   worksheet and its required columns.
+1. Prepare `inputs/keyword_discovery_queries.xlsx` by copying
+   `inputs/keyword_discovery_queries.example.xlsx`, then populate and validate its
+   `검색작업` worksheet. The generic workbook is an input-format reference; create
+   the scope-specific workbooks named in [Pilot datasets](#pilot-datasets) for any
+   actual pilot stage.
 2. Set the collector database and browser configuration in the local `.env` only.
    Do not copy credentials into the workbook, this runbook, terminals captured for
    review, or Git.
@@ -24,6 +26,20 @@ database. Do not start the persistence pilot from CI or unattended automation.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --dry-run
+```
+
+## Mandatory generic command reference (syntax only)
+
+The two commands below are retained verbatim as the required generic command
+reference. The first validates the prepared generic workbook without live browser
+or database activity. The second is **syntax reference only**: do not execute it
+during environment setup or any pilot stage, because rollback mode still connects to
+live Naver and the configured database. Actual live rollback execution is permitted
+only in controlled live-smoke stage 1 with the canonical one-query/limit-5 command.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --dry-run
+.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --rollback-test
 ```
 
 ## Pilot datasets

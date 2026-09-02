@@ -111,3 +111,41 @@ controls` ran the complete keyword-discovery suite and returned `112 passed in
 `git show --check --format= HEAD` returned no whitespace errors;
 `git status --short` returned no output (clean worktree); and the committed-tree
 secret scan returned `secret_scan=no_matches`.
+
+## Fix round 2: mandated generic command reference
+
+### RED / documentation verification
+
+Before the correction, this offline check returned
+`RED=missing mandated generic rollback command reference` (exit code 1):
+
+```powershell
+$runbook = Get-Content -Raw 'docs/keyword-discovery-rank-pilot-runbook.md'
+$genericRollback = '.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --rollback-test'
+if ($runbook.Contains($genericRollback)) { throw 'Generic rollback reference unexpectedly already present' }
+Write-Output 'RED=missing mandated generic rollback command reference'
+exit 1
+```
+
+### GREEN / documentation correction
+
+The runbook now defines preparation of `inputs/keyword_discovery_queries.xlsx` from
+the canonical example and contains a dedicated syntax-only reference section with
+both required generic commands verbatim. It expressly forbids execution of the
+generic rollback command during setup or pilot work and keeps actual rollback
+execution gated to the unchanged canonical one-query/limit-5 smoke command.
+
+### Verification
+
+The focused documentation check found both mandatory generic commands, confirmed
+the generic rollback is syntax-only, and confirmed the canonical one-query/limit-5
+rollback remains gated. The end-to-end fixture test returned `1 passed in 1.83s`.
+The complete offline keyword-discovery suite returned `112 passed in 3.67s` (exit
+code 0). Both pytest invocations emitted the existing non-fatal shared-temp cleanup
+warning. `git diff --check` returned no whitespace errors. No live Naver or database
+call was made; final committed-tree checks are recorded after the follow-up commit.
+
+Final committed-tree verification for `15796da docs: restore keyword discovery
+command reference`: `git show --check --format= HEAD` returned no whitespace errors,
+`git status --short` returned no output (clean worktree), and the committed-tree
+secret scan returned `secret_scan=no_matches`.
