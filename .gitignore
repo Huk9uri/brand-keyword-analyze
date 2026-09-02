@@ -19,6 +19,7 @@ tmp/
 .cache/
 .tmp_*
 inputs/keyword_input.xlsx
+inputs/keyword_discovery_queries.xlsx
 *.xlsx.inspect.ndjson
 
 # Local worktrees
