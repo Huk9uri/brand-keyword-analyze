@@ -34,8 +34,10 @@ The two commands below are retained verbatim as the required generic command
 reference. The first validates the prepared generic workbook without live browser
 or database activity. The second is **syntax reference only**: do not execute it
 during environment setup or any pilot stage, because rollback mode still connects to
-live Naver and the configured database. Actual live rollback execution is permitted
-only in controlled live-smoke stage 1 with the canonical one-query/limit-5 command.
+live Naver and the configured database. The first live rollback execution is
+permitted only in controlled live-smoke stage 1; later rollback scopes are
+permitted only after their preceding gates pass. Stage 1 uses the canonical
+one-query/limit-5 command.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --dry-run

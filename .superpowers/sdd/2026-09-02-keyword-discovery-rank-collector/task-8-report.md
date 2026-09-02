@@ -112,6 +112,43 @@ controls` ran the complete keyword-discovery suite and returned `112 passed in
 `git status --short` returned no output (clean worktree); and the committed-tree
 secret scan returned `secret_scan=no_matches`.
 
+## Fix round 3: staged rollback wording
+
+### RED / documentation assertion
+
+The focused offline assertion for explicit staged rollback permission returned
+`RED=missing staged rollback permission wording` (exit code 1) before the wording
+change:
+
+```powershell
+$runbook = Get-Content -Raw 'docs/keyword-discovery-rank-pilot-runbook.md'
+$expected = 'The first live rollback execution is permitted only in controlled live-smoke stage 1; later rollback scopes are permitted only after their preceding gates pass.'
+if ($runbook.Contains($expected)) { throw 'Correct staged rollback wording unexpectedly already present' }
+Write-Output 'RED=missing staged rollback permission wording'
+exit 1
+```
+
+### GREEN / minimal correction
+
+The syntax-reference warning now permits only the first live rollback execution in
+stage 1 and explicitly permits later rollback scopes after their preceding gates
+pass. The controlled smoke sequence itself is unchanged.
+
+### Verification
+
+The focused assertion returned
+`GREEN=first rollback is stage-1-only and later rollback scopes remain gate-controlled`.
+The end-to-end fixture test returned `1 passed in 1.05s`; the complete offline
+keyword-discovery suite returned `112 passed in 4.02s` (exit code 0). Both pytest
+invocations emitted the existing non-fatal shared-temp cleanup warning.
+`git diff --check` returned no whitespace errors. No live Naver or database call
+was made; final committed-tree checks are recorded after the follow-up commit.
+
+Final committed-tree verification for `73bb88b docs: clarify staged rollback
+controls`: `git show --check --format= HEAD` returned no whitespace errors,
+`git status --short` returned no output (clean worktree), and the committed-tree
+secret scan returned `secret_scan=no_matches`.
+
 ## Fix round 2: mandated generic command reference
 
 ### RED / documentation verification
