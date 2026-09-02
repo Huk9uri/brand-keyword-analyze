@@ -15,6 +15,7 @@ node_modules/
 
 # Generated artifacts and caches
 outputs/
+artifacts/keyword_discovery_rank/
 tmp/
 .cache/
 .tmp_*
