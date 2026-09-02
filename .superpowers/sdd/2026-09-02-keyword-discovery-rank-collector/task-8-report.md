@@ -61,3 +61,53 @@ produce a test failure or change the process exit code.
 The shared pytest temporary-directory cleanup warning is external to this worktree.
 If it becomes a non-zero exit in another environment, configure pytest's base temp
 directory to a writable location before treating it as a collector failure.
+
+## Fix round 1: review follow-up
+
+### RED / review gap
+
+The review found that the generic rollback command was positioned before the gated
+live-smoke sequence, the expanded pilot workbooks had no canonical names or exact
+invocations, and the `naver_place_rank` protection check delegated to an unnamed
+audit. These are human operational-document gaps, so no source-text unit test was
+added: such a test would only assert prose rather than exercise collector behavior.
+
+### GREEN / documentation correction
+
+The runbook now limits the first rollback call to
+`keyword_discovery_smoke_one_query_limit5.xlsx` with `--limit 5`, defines canonical
+filenames and commands for all five pilot scopes (including the 25-task mobile and
+20-task mobile/PC files), and names `KeywordDiscoveryPilotWriteScopeAudit` as the
+DBA-managed SQL Server Audit mechanism. It defines the before/after audit exports,
+UTC window, checksums, and zero-DML pass condition while reserving collector
+database inspection for the two new tables.
+
+### Verification
+
+The initial Task 8 commit is `e02155d docs: add keyword discovery pilot runbook`.
+The required changed-file secret scan command is:
+
+```powershell
+git show --format= HEAD | rg -n -i '(?:AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret|password|token)\s*[=:]\s*[^\s#]{8,}|NAVER_[A-Z0-9_]+\s=)'
+```
+
+Its recorded result for `e02155d` was `secret_scan=no_matches`. For this follow-up,
+the staged scan command was:
+
+```powershell
+git diff --cached | rg -n -i '(?:AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret|password|token)\s*[=:]\s*[^\s#]{8,}|NAVER_[A-Z0-9_]+\s=)'
+```
+
+It returned `secret_scan=no_matches`; `git diff --cached --check` returned no
+whitespace errors. The offline documentation-contract check verified the canonical
+one-query, 25-task, and 20-task commands, audit specification name, UTC window,
+and audit pass condition. The end-to-end fixture test then returned `1 passed in
+2.57s` with the existing non-fatal shared-temp pytest cleanup warning. Final git
+status is recorded after this follow-up commit.
+
+Post-commit verification for `7830657 docs: clarify keyword discovery pilot
+controls` ran the complete keyword-discovery suite and returned `112 passed in
+5.38s` (exit code 0), with the same non-fatal shared-temp pytest cleanup warning.
+`git show --check --format= HEAD` returned no whitespace errors;
+`git status --short` returned no output (clean worktree); and the committed-tree
+secret scan returned `secret_scan=no_matches`.

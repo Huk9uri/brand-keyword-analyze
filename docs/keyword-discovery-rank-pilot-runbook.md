@@ -6,9 +6,9 @@ database. Do not start the persistence pilot from CI or unattended automation.
 
 ## Environment and input preparation
 
-1. Create `inputs/keyword_discovery_queries.xlsx` from
-   `inputs/keyword_discovery_queries.example.xlsx`. Use the `검색작업` worksheet
-   and its required columns. Keep the first pilot input to the scope stated below.
+1. Create the scope-specific workbooks named in [Pilot datasets](#pilot-datasets)
+   from `inputs/keyword_discovery_queries.example.xlsx`. Use the `검색작업`
+   worksheet and its required columns.
 2. Set the collector database and browser configuration in the local `.env` only.
    Do not copy credentials into the workbook, this runbook, terminals captured for
    review, or Git.
@@ -26,25 +26,22 @@ database. Do not start the persistence pilot from CI or unattended automation.
 .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --dry-run
 ```
 
-5. Use rollback mode for a pre-persistence exercise. It connects to the configured
-   services, but converts repository commits to rollbacks, so record the run ID and
-   terminal summary for review:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --rollback-test
-```
-
 ## Pilot datasets
 
-Prepare two explicitly labelled worksheets/files; do not combine these with normal
-production inputs.
+Create these canonical, separate workbooks. Do not combine them with normal
+production inputs or run a larger scope before its preceding gate has passed.
 
-- **Mobile pilot:** 5 stores × 5 keywords, all `MOBILE`, for exactly 25 unique
-  tasks after deduplication. Each row must have a target store ID, target store
-  name, location name, latitude, longitude, and source ID.
-- **Device comparison:** select 10 of those query/location/store combinations and
-  make one `MOBILE` and one `PC` task for each. This is a matched 10-query
-  mobile/PC comparison (20 tasks), not a substitute for the 25-task mobile pilot.
+| File | Required contents | Use |
+| --- | --- | --- |
+| `inputs/keyword_discovery_smoke_one_query_limit5.xlsx` | One unique `MOBILE` task | live-smoke stage 1 |
+| `inputs/keyword_discovery_smoke_three_queries_limit20.xlsx` | Three unique `MOBILE` tasks | live-smoke stage 2 |
+| `inputs/keyword_discovery_one_store_five_keywords.xlsx` | One store × five unique `MOBILE` keywords (five tasks) | live-smoke stage 3 |
+| `inputs/keyword_discovery_mobile_pilot_25.xlsx` | Five stores × five unique `MOBILE` keywords (exactly 25 tasks after deduplication) | expanded mobile pilot |
+| `inputs/keyword_discovery_mobile_pc_comparison_20.xlsx` | Ten matched query/location/store combinations, each once as `MOBILE` and once as `PC` (exactly 20 tasks after deduplication) | expanded device comparison |
+
+Every row needs target store ID/name, location name, latitude, longitude, device,
+and source ID. For the comparison workbook, keep each mobile/PC pair adjacent and
+use the same query, target store, and location/coordinates; only `기기` differs.
 
 Record the input file hash, reviewer, date, browser version, configured result
 limit, and generated run ID before every live run. Keep workbook duplicates in the
@@ -93,17 +90,34 @@ repeat the failed gate before proceeding to the next scope.
 Perform each stage only after the previous stage meets every acceptance gate.
 
 1. **One query, limit 5, rollback.** Build a one-row mobile workbook, execute the
-   collector with `--limit 5 --rollback-test`, and manually compare all five (or all
-   end-confirmed short) rendered DOM cards with the review sheet. Confirm query,
-   place ID, raw/organic rank, advertising, and own-store classification.
+   collector only with the canonical one-row input below. Rollback mode connects to
+   live Naver and the configured database even though it rolls persistence back;
+   it is not an environment-setup command and must not be run against any larger
+   workbook. Manually compare all five (or all end-confirmed short) rendered DOM
+   cards with the review sheet. Confirm query, place ID, raw/organic rank,
+   advertising, and own-store classification.
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_smoke_one_query_limit5.xlsx --limit 5 --rollback-test
+   ```
+
 2. **Three queries, limit 20, rollback.** Use three independent mobile queries,
-   execute with `--limit 20 --rollback-test`, and review all result cards and every
-   end marker. Confirm no result from one task appears in another task's evidence or
+   execute the exact command below, and review all result cards and every end
+   marker. Confirm no result from one task appears in another task's evidence or
    output.
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_smoke_three_queries_limit20.xlsx --limit 20 --rollback-test
+   ```
+
 3. **One store, five keywords, persistence.** After the two rollback stages pass,
-   use five mobile keywords for one store and run without `--rollback-test`. This is
-   the first permitted persistent write; do not expand to the 25-task pilot before
-   its manual review passes.
+   use the canonical five-task input and run without `--rollback-test`. This is the
+   first permitted persistent write; do not expand to the 25-task pilot before its
+   manual review passes.
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_one_store_five_keywords.xlsx --limit 20
+   ```
 
 For the persistence stage, inspect only the two new tables:
 
@@ -120,14 +134,53 @@ WHERE s.run_id = @run_id
 ORDER BY r.snapshot_id, r.raw_position;
 ```
 
-Confirm the reviewed snapshot/result rows are the only intended writes and that
-`naver_place_rank` is unchanged. Use the approved database change/audit comparison
-for that confirmation; do not run exploratory queries against unrelated tables.
+Confirm the reviewed snapshot/result rows are the only intended writes. Do not
+query `naver_place_rank` from the pilot account or use exploratory queries against
+unrelated tables.
+
+### Write-scope audit for `naver_place_rank`
+
+The approved independent mechanism is the DBA-managed SQL Server Audit database
+audit specification **`KeywordDiscoveryPilotWriteScopeAudit`**, configured to emit
+`INSERT`, `UPDATE`, and `DELETE` events for `dbo.naver_place_rank` by the collector
+database principal. SQL Server Audit supports database-level actions; see
+[Microsoft's SQL Server Audit specification guide](https://learn.microsoft.com/en-us/sql/relational-databases/security/auditing/create-a-server-audit-and-database-audit-specification?view=sql-server-ver17).
+The DBA must confirm that this specification is enabled before the first persistent
+stage. If it is not enabled, stop: persistence is not authorized.
+
+1. Before the one-store/five-keywords persistent command, the DBA exports the
+   audit entries for the collector principal and `dbo.naver_place_rank`, records a
+   UTC `audit_window_start`, the audit target/sequence identifier, and the export
+   checksum in the review sheet.
+2. Immediately after the command completes, the DBA exports the same audit stream
+   from `audit_window_start` through a recorded UTC `audit_window_end`, again
+   recording its target/sequence identifier and checksum. Attach both exports to
+   the review record; the collector operator still queries only the two new tables
+   shown above.
+3. The pass condition for `naver_place_rank` and the cross-task-impact gate is zero
+   `INSERT`, `UPDATE`, or `DELETE` audit events on `dbo.naver_place_rank` in that
+   inclusive window, plus the reviewed snapshots/results matching the intended run
+   ID. Any event, missing export, untrusted timestamp, or checksum mismatch fails
+   the hard gate and stops expansion.
 
 ## Expansion and closeout
 
-Once the one-store persistence stage passes, run the 25-task mobile pilot, then the
-matched 10-query mobile/PC comparison. Review the acceptance gates after each run;
-do not batch scopes together. Archive only non-secret input metadata, run IDs,
-review sheets, and evidence locations. Keep `.env`, browser profiles, screenshots
-containing sensitive information, and generated artifacts out of Git.
+Once the one-store persistence stage passes, execute each expanded scope in rollback
+mode first, complete its review, then repeat it without `--rollback-test` only when
+the DBA write-scope audit is enabled and every hard gate has passed. Do not batch
+scopes together.
+
+```powershell
+# 25-task mobile pilot rehearsal, then (only after review) its persistent run
+.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_mobile_pilot_25.xlsx --limit 20 --rollback-test
+.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_mobile_pilot_25.xlsx --limit 20
+
+# 20-task matched mobile/PC comparison rehearsal, then (only after review) its persistent run
+.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_mobile_pc_comparison_20.xlsx --limit 20 --rollback-test
+.\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_mobile_pc_comparison_20.xlsx --limit 20
+```
+
+Archive only non-secret input metadata, run IDs, review sheets, audit-export
+checksums, and evidence locations. Keep `.env`, browser profiles, screenshots
+containing sensitive information, audit contents, and generated artifacts out of
+Git.
