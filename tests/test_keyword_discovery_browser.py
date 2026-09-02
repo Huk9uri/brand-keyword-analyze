@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from selenium.common.exceptions import TimeoutException
 
 from scripts.keyword_discovery_rank.browser import (
     BrowserFactory,
@@ -81,6 +82,7 @@ class FakeDriver:
         self.page_index = 0
         self.fail_on = fail_on
         self.get_calls: list[str] = []
+        self.page_load_timeouts: list[float] = []
         self.window_sizes: list[tuple[int, int]] = []
         self.cdp_calls: list[tuple[str, dict[str, float | int]]] = []
         self.script_calls: list[str] = []
@@ -95,9 +97,14 @@ class FakeDriver:
         return self.pages[self.page_index][1]
 
     def get(self, url: str) -> None:
+        if self.fail_on == "navigation_timeout":
+            raise TimeoutException("navigation timed out")
         if self.fail_on == "get":
             raise RuntimeError("browser disappeared")
         self.get_calls.append(url)
+
+    def set_page_load_timeout(self, seconds: float) -> None:
+        self.page_load_timeouts.append(seconds)
 
     def set_window_size(self, width: int, height: int) -> None:
         self.window_sizes.append((width, height))
@@ -113,6 +120,8 @@ class FakeDriver:
             self.page_index += 1
 
     def save_screenshot(self, path: str) -> bool:
+        if self.fail_on == "screenshot":
+            raise OSError("screenshot disk failure")
         self.screenshot_paths.append(path)
         Path(path).write_bytes(b"fake-png")
         return True
@@ -180,8 +189,14 @@ def make_task(device_type: DeviceType = DeviceType.MOBILE) -> SearchTask:
     )
 
 
-def make_session(driver: FakeDriver, *, timeout_seconds: float = 2, result_limit: int = 20):
-    clock = ManualClock()
+def make_session(
+    driver: FakeDriver,
+    *,
+    timeout_seconds: float = 2,
+    result_limit: int = 20,
+    clock: ManualClock | None = None,
+):
+    clock = clock or ManualClock()
     return BrowserSession(
         driver,
         timeout_seconds=timeout_seconds,
@@ -204,6 +219,38 @@ def test_search_builds_encoded_mobile_url_and_returns_results_at_limit():
     assert page.final_url == final_url
     assert page.html == result_html(20)
     assert (page.state, page.observed_result_count, page.result_end_reached) == ("RESULTS", 20, False)
+
+
+def test_search_deadline_covers_navigation_even_if_driver_returns_late():
+    final_url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    clock = ManualClock()
+
+    class SlowNavigationDriver(FakeDriver):
+        def get(self, url: str) -> None:
+            super().get(url)
+            clock.sleep(3)
+
+    driver = SlowNavigationDriver([(final_url, result_html(20))])
+
+    with pytest.raises(SearchStateTimeout) as caught:
+        make_session(driver, timeout_seconds=2, clock=clock).search(make_task())
+
+    assert driver.page_load_timeouts == [2]
+    assert caught.value.last_url == final_url
+    assert caught.value.html == result_html(20)
+
+
+def test_search_maps_selenium_navigation_timeout_to_typed_timeout_with_context():
+    final_url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = "<html><body>navigation still loading</body></html>"
+    driver = FakeDriver([(final_url, html)], fail_on="navigation_timeout")
+
+    with pytest.raises(SearchStateTimeout) as caught:
+        make_session(driver).search(make_task())
+
+    assert driver.page_load_timeouts == [2]
+    assert caught.value.last_url == final_url
+    assert caught.value.html == html
 
 
 def test_search_uses_desktop_host_for_pc_task():
@@ -304,3 +351,43 @@ def test_save_evidence_writes_html_and_screenshot(tmp_path: Path):
     assert screenshot_path == tmp_path / "screenshot.png"
     assert html_path.read_text(encoding="utf-8") == html
     assert screenshot_path.read_bytes() == b"fake-png"
+
+
+def test_save_evidence_wraps_directory_creation_failure_with_context(tmp_path: Path):
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = result_html(3)
+    driver = FakeDriver([(url, html)])
+    blocking_file = tmp_path / "not-a-directory"
+    blocking_file.write_text("block mkdir", encoding="utf-8")
+
+    with pytest.raises(BrowserSessionError) as caught:
+        make_session(driver).save_evidence(blocking_file / "evidence", html=html)
+
+    assert caught.value.last_url == url
+    assert caught.value.html == html
+
+
+def test_save_evidence_wraps_html_write_failure_with_context(tmp_path: Path):
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = result_html(3)
+    driver = FakeDriver([(url, html)])
+    (tmp_path / "page.html").mkdir()
+
+    with pytest.raises(BrowserSessionError) as caught:
+        make_session(driver).save_evidence(tmp_path, html=html)
+
+    assert caught.value.last_url == url
+    assert caught.value.html == html
+    assert driver.screenshot_paths == []
+
+
+def test_save_evidence_wraps_screenshot_failure_with_context(tmp_path: Path):
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = result_html(3)
+    driver = FakeDriver([(url, html)], fail_on="screenshot")
+
+    with pytest.raises(BrowserSessionError) as caught:
+        make_session(driver).save_evidence(tmp_path, html=html)
+
+    assert caught.value.last_url == url
+    assert caught.value.html == html

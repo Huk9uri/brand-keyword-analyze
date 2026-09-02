@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
 
 from .models import DeviceType, SearchPage, SearchTask
@@ -112,12 +113,28 @@ class BrowserSession:
 
     def search(self, task: SearchTask) -> SearchPage:
         search_url = _build_search_url(task)
+        deadline = self._monotonic() + self.timeout_seconds
         try:
+            self.driver.set_page_load_timeout(self.timeout_seconds)
             self.driver.get(search_url)
+        except TimeoutException as exc:
+            self._capture_best_effort()
+            raise SearchStateTimeout(
+                f"search navigation did not complete before timeout: {exc}",
+                last_url=self._last_url,
+                html=self._last_html,
+            ) from exc
         except Exception as exc:
             raise self._session_error("failed to load search URL", exc) from exc
 
-        deadline = self._monotonic() + self.timeout_seconds
+        self._capture()
+        if self._monotonic() >= deadline:
+            raise SearchStateTimeout(
+                "search navigation exceeded the task timeout",
+                last_url=self._last_url,
+                html=self._last_html,
+            )
+
         last_state = "LOADING"
         while True:
             self._capture()
@@ -159,17 +176,23 @@ class BrowserSession:
 
     def save_evidence(self, directory: Path, *, html: str | None = None) -> tuple[Path, Path]:
         directory = Path(directory)
-        directory.mkdir(parents=True, exist_ok=True)
         html_path = directory / "page.html"
         screenshot_path = directory / "screenshot.png"
 
         if html is None:
-            try:
-                html = self.driver.page_source
-            except Exception as exc:
-                raise self._session_error("failed to read HTML evidence", exc) from exc
-        self._last_html = html
-        html_path.write_text(html, encoding="utf-8")
+            self._capture()
+            html = self._last_html
+        else:
+            self._last_html = html
+            self._capture_url_best_effort()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise self._session_error("failed to create evidence directory", exc) from exc
+        try:
+            html_path.write_text(html, encoding="utf-8")
+        except OSError as exc:
+            raise self._session_error("failed to write HTML evidence", exc) from exc
         try:
             saved = self.driver.save_screenshot(str(screenshot_path))
         except Exception as exc:
@@ -188,6 +211,19 @@ class BrowserSession:
             self._last_html = self.driver.page_source
         except Exception as exc:
             raise self._session_error("failed to inspect browser state", exc) from exc
+
+    def _capture_best_effort(self) -> None:
+        self._capture_url_best_effort()
+        try:
+            self._last_html = self.driver.page_source
+        except Exception:
+            pass
+
+    def _capture_url_best_effort(self) -> None:
+        try:
+            self._last_url = self.driver.current_url
+        except Exception:
+            pass
 
     def _session_error(self, message: str, cause: Exception) -> BrowserSessionError:
         return BrowserSessionError(
