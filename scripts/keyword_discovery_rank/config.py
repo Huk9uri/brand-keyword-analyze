@@ -43,7 +43,13 @@ class CollectorConfig:
             }
         )
 
-        required = ("DB_SERVER", "DB_PORT", "DB_DATABASE", "DB_USER", "DB_PASSWORD")
+        required = (
+            "DB_SERVER",
+            "DB_PORT",
+            "DB_USER",
+            "DB_PASSWORD",
+            "KEYWORD_DISCOVERY_DB_DATABASE",
+        )
         missing = [key for key in required if not values.get(key, "").strip()]
         if missing:
             raise ConfigError("missing environment keys: " + ", ".join(missing))
@@ -55,7 +61,7 @@ class CollectorConfig:
         return cls(
             db_server=values["DB_SERVER"].strip(),
             db_port=_parse_positive_int(values["DB_PORT"], "DB_PORT"),
-            db_database=values["DB_DATABASE"].strip(),
+            db_database=values["KEYWORD_DISCOVERY_DB_DATABASE"].strip(),
             db_user=values["DB_USER"].strip(),
             db_password=values["DB_PASSWORD"].strip(),
             db_encrypt=_parse_bool(values.get("DB_ENCRYPT", "true"), "DB_ENCRYPT"),
