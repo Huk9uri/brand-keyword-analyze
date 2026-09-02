@@ -170,6 +170,76 @@ def test_schema_creation_is_idempotently_guarded_and_verification_is_read_only()
     assert "delete " not in verify_sql
 
 
+def test_verify_script_uses_sql_server_datetime2_metadata_precision():
+    verify_sql = _normalized(VERIFY_SQL)
+
+    assert (
+        "(n'naver_keyword_discovery_snapshot', n'collected_at', "
+        "n'datetime2', 6, 19, 0, 0, 0)"
+    ) in verify_sql
+
+
+def test_verify_script_checks_exact_constraint_and_index_definitions():
+    verify_sql = _normalized(VERIFY_SQL)
+
+    assert "from sys.index_columns as index_columns" in verify_sql
+    assert "index_columns.key_ordinal > 0" in verify_sql
+    assert "order by index_columns.key_ordinal" in verify_sql
+    for table, index, columns in (
+        (
+            "naver_keyword_discovery_snapshot",
+            "pk_naver_keyword_discovery_snapshot",
+            "snapshot_id",
+        ),
+        (
+            "naver_keyword_discovery_snapshot",
+            "uq_naver_keyword_discovery_snapshot_run_task",
+            "run_id,task_key",
+        ),
+        (
+            "naver_keyword_discovery_result",
+            "pk_naver_keyword_discovery_result",
+            "snapshot_id,raw_position",
+        ),
+        *(
+            (table.removeprefix("dbo."), index, columns.replace(" ", ""))
+            for index, (table, columns) in LOOKUP_INDEXES.items()
+        ),
+        (
+            "naver_keyword_discovery_result",
+            "ux_naver_keyword_discovery_result_snapshot_organic_rank",
+            "snapshot_id,organic_rank",
+        ),
+    ):
+        assert f"(n'{table}', n'{index}'," in verify_sql
+        assert f"n'{columns}'" in verify_sql
+
+    assert "from sys.foreign_key_columns as foreign_key_columns" in verify_sql
+    assert "order by foreign_key_columns.constraint_column_id" in verify_sql
+    assert (
+        "(n'naver_keyword_discovery_result', "
+        "n'fk_naver_keyword_discovery_result_snapshot', "
+        "n'naver_keyword_discovery_snapshot', n'snapshot_id', n'snapshot_id')"
+    ) in verify_sql
+
+    assert "from sys.check_constraints as check_constraints" in verify_sql
+    for constraint, definition in (
+        ("ck_naver_keyword_discovery_snapshot_device_type", "device_typein('mobile','pc')"),
+        ("ck_naver_keyword_discovery_snapshot_source_type", "source_typein('excel','database')"),
+        ("ck_naver_keyword_discovery_snapshot_latitude", "latitudebetween-90and90"),
+        ("ck_naver_keyword_discovery_snapshot_longitude", "longitudebetween-180and180"),
+        ("ck_naver_keyword_discovery_snapshot_observed_count", "observed_result_count>=0"),
+        ("ck_naver_keyword_discovery_result_raw_position", "raw_position>=1"),
+        (
+            "ck_naver_keyword_discovery_result_organic_rank",
+            "organic_rankisnullororganic_rank>=1",
+        ),
+    ):
+        assert f"n'{constraint}'" in verify_sql
+        sql_definition = definition.replace("'", "''")
+        assert f"n'{sql_definition}'" in verify_sql
+
+
 def test_schema_files_do_not_reference_legacy_table_or_unapproved_columns():
     sql = f"{_normalized(CREATE_SQL)} {_normalized(VERIFY_SQL)}"
 
