@@ -112,6 +112,65 @@ def test_excel_source_keeps_first_row_for_duplicate_task_keys(monkeypatch):
     assert tasks[0].target_store_name == "육수당 선릉점"
 
 
+def test_excel_source_requires_named_search_task_worksheet(tmp_path: Path):
+    workbook = __import__("openpyxl").Workbook()
+    worksheet = workbook.active
+    worksheet.title = "다른시트"
+    worksheet.append(HEADERS)
+    worksheet.append(
+        ["선릉역 국밥", "S1", "육수당 선릉점", "선릉점", 37.5048, 127.0489, "MOBILE", "1"]
+    )
+    path = tmp_path / "wrong-sheet.xlsx"
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(InputValidationError, match="검색작업"):
+        ExcelTaskSource(path).load()
+
+
+def test_excel_bundle_loads_authoritative_store_and_manual_place_id_mapping(tmp_path: Path):
+    workbook = __import__("openpyxl").Workbook()
+    tasks = workbook.active
+    tasks.title = "검색작업"
+    tasks.append(HEADERS)
+    tasks.append(
+        ["선릉역 국밥", "S1", "표시용 매장명", "선릉점", 37.5048, 127.0489, "MOBILE", "1"]
+    )
+    stores = workbook.create_sheet("자사매장")
+    stores.append(["매장ID", "매장명", "네이버플레이스ID", "수동매핑플레이스ID"])
+    stores.append(["S1", "육수당 선릉점", "1001", "legacy-1001"])
+    path = tmp_path / "with-identity.xlsx"
+    workbook.save(path)
+    workbook.close()
+
+    loaded = ExcelTaskSource(path).load_bundle()
+
+    assert [task.target_store_id for task in loaded.tasks] == ["S1"]
+    assert [(store.store_id, store.store_name, store.place_id) for store in loaded.own_stores] == [
+        ("S1", "육수당 선릉점", "1001")
+    ]
+    assert dict(loaded.manual_place_id_mappings) == {"legacy-1001": "S1"}
+
+
+def test_excel_bundle_requires_identity_for_every_task_store(tmp_path: Path):
+    workbook = __import__("openpyxl").Workbook()
+    tasks = workbook.active
+    tasks.title = "검색작업"
+    tasks.append(HEADERS)
+    tasks.append(
+        ["선릉역 국밥", "S1", "육수당 선릉점", "선릉점", 37.5048, 127.0489, "MOBILE", "1"]
+    )
+    stores = workbook.create_sheet("자사매장")
+    stores.append(["매장ID", "매장명", "네이버플레이스ID", "수동매핑플레이스ID"])
+    stores.append(["S2", "육수당 강남점", "2002", None])
+    path = tmp_path / "missing-task-store.xlsx"
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(InputValidationError, match="S1"):
+        ExcelTaskSource(path).load_bundle()
+
+
 class _FakeCursor:
     def __init__(self, rows):
         self.rows = rows
@@ -161,12 +220,21 @@ def test_committed_example_workbook_has_a_typed_labeled_search_task():
     workbook_path = Path(__file__).parents[1] / "inputs" / "keyword_discovery_queries.example.xlsx"
     workbook = __import__("openpyxl").load_workbook(workbook_path, read_only=True, data_only=True)
     try:
-        assert workbook.sheetnames == ["검색작업"]
+        assert workbook.sheetnames == ["검색작업", "자사매장"]
         worksheet = workbook["검색작업"]
         assert [cell.value for cell in next(worksheet.iter_rows(max_row=1))] == HEADERS
         sample_row = next(worksheet.iter_rows(min_row=2, max_row=2, values_only=True))
         assert sample_row[0] == "예시: 선릉역 국밥"
         assert isinstance(sample_row[4], float)
         assert isinstance(sample_row[5], float)
+        identity = workbook["자사매장"]
+        assert [cell.value for cell in next(identity.iter_rows(max_row=1))] == [
+            "매장ID",
+            "매장명",
+            "네이버플레이스ID",
+            "수동매핑플레이스ID",
+        ]
+        identity_row = next(identity.iter_rows(min_row=2, max_row=2, values_only=True))
+        assert identity_row == ("SAMPLE-S1", "예시 매장", "1001", "legacy-1001")
     finally:
         workbook.close()

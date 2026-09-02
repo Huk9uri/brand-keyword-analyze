@@ -10,6 +10,14 @@ class RepositoryError(RuntimeError):
     """Raised when a snapshot transaction cannot be persisted safely."""
 
 
+class FatalRepositoryError(RepositoryError):
+    """A connection, authorization, target, or schema failure that must stop the run."""
+
+
+class TaskPersistenceError(RepositoryError):
+    """A data failure isolated to one final task result."""
+
+
 SNAPSHOT_INSERT_SQL = """
 INSERT INTO dbo.naver_keyword_discovery_snapshot (
     run_id,
@@ -61,6 +69,69 @@ FROM dbo.naver_keyword_discovery_result
 WHERE snapshot_id = %s
 """
 
+SCHEMA_COLUMNS_SQL = """
+SELECT
+    TABLE_NAME,
+    COLUMN_NAME,
+    DATA_TYPE,
+    CHARACTER_MAXIMUM_LENGTH,
+    NUMERIC_PRECISION,
+    NUMERIC_SCALE,
+    IS_NULLABLE,
+    CAST(COLUMNPROPERTY(
+        OBJECT_ID(QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME)),
+        COLUMN_NAME,
+        'IsIdentity'
+    ) AS int) AS is_identity
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'dbo'
+  AND TABLE_NAME IN ('naver_keyword_discovery_snapshot', 'naver_keyword_discovery_result')
+ORDER BY TABLE_NAME, COLUMN_NAME
+"""
+
+# INFORMATION_SCHEMA reports character lengths in characters (not sys.columns bytes).
+# Signatures are: data type, char length, numeric precision, numeric scale, nullable, identity.
+EXPECTED_SCHEMA_COLUMNS = {
+    ("naver_keyword_discovery_snapshot", "snapshot_id"): ("bigint", None, 19, 0, "NO", 1),
+    ("naver_keyword_discovery_snapshot", "run_id"): ("uniqueidentifier", None, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "task_key"): ("char", 64, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "query"): ("nvarchar", 255, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "normalized_query"): ("nvarchar", 255, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "target_store_id"): ("nvarchar", 100, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "target_store_name"): ("nvarchar", 200, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "location_name"): ("nvarchar", 200, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "latitude"): ("decimal", None, 10, 7, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "longitude"): ("decimal", None, 10, 7, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "device_type"): ("varchar", 10, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "source_type"): ("varchar", 20, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "source_id"): ("nvarchar", 100, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "requested_result_limit"): ("smallint", None, 5, 0, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "observed_result_count"): ("smallint", None, 5, 0, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "result_end_reached"): ("bit", None, 1, 0, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "collect_status"): ("varchar", 30, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "collect_msg"): ("nvarchar", 1000, None, None, "YES", 0),
+    ("naver_keyword_discovery_snapshot", "parser_version"): ("varchar", 30, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "final_url"): ("nvarchar", 2000, None, None, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "collected_at"): ("datetime2", None, None, None, "NO", 0),
+    ("naver_keyword_discovery_result", "snapshot_id"): ("bigint", None, 19, 0, "NO", 0),
+    ("naver_keyword_discovery_result", "raw_position"): ("smallint", None, 5, 0, "NO", 0),
+    ("naver_keyword_discovery_result", "organic_rank"): ("smallint", None, 5, 0, "YES", 0),
+    ("naver_keyword_discovery_result", "place_id"): ("varchar", 50, None, None, "NO", 0),
+    ("naver_keyword_discovery_result", "place_name"): ("nvarchar", 300, None, None, "NO", 0),
+    ("naver_keyword_discovery_result", "category"): ("nvarchar", 300, None, None, "YES", 0),
+    ("naver_keyword_discovery_result", "is_ad"): ("bit", None, 1, 0, "NO", 0),
+    ("naver_keyword_discovery_result", "detail_url"): ("nvarchar", 2000, None, None, "NO", 0),
+    ("naver_keyword_discovery_result", "distance_text"): ("nvarchar", 100, None, None, "YES", 0),
+    ("naver_keyword_discovery_result", "is_own_store"): ("bit", None, 1, 0, "NO", 0),
+    ("naver_keyword_discovery_result", "matched_store_id"): ("nvarchar", 100, None, None, "YES", 0),
+    ("naver_keyword_discovery_result", "match_method"): ("varchar", 30, None, None, "NO", 0),
+}
+
+_FATAL_SQL_ERROR_CODES = frozenset(
+    {53, 207, 208, 229, 233, 4060, 18456, 20002, 20003, 10054, 10060}
+)
+_TASK_LOCAL_SQL_ERROR_CODES = frozenset({245, 515, 547, 2601, 2627, 2628, 8114, 8152})
+
 
 class SnapshotRepository:
     def __init__(self, connection: Any):
@@ -72,16 +143,18 @@ class SnapshotRepository:
         results: Sequence[ParsedResult],
     ) -> int:
         cursor = None
+        operation = "snapshot"
         try:
             cursor = self._connection.cursor()
             cursor.execute(SNAPSHOT_INSERT_SQL, _snapshot_values(snapshot))
             identity_row = cursor.fetchone()
             if identity_row is None:
-                raise RepositoryError("snapshot insert did not return snapshot_id")
+                raise FatalRepositoryError("snapshot insert did not return snapshot_id")
             snapshot_id = int(identity_row[0])
 
             persisted_results = () if snapshot.collect_status is CollectStatus.NO_RESULT else tuple(results)
             if persisted_results:
+                operation = "results"
                 cursor.executemany(
                     RESULT_INSERT_SQL,
                     tuple(_result_values(snapshot_id, result) for result in persisted_results),
@@ -91,7 +164,7 @@ class SnapshotRepository:
             count_row = cursor.fetchone()
             inserted_count = int(count_row[0]) if count_row is not None else -1
             if inserted_count != len(persisted_results):
-                raise RepositoryError(
+                raise TaskPersistenceError(
                     "result row count mismatch before commit: "
                     f"expected {len(persisted_results)}, found {inserted_count}"
                 )
@@ -99,26 +172,74 @@ class SnapshotRepository:
             self._connection.commit()
             return snapshot_id
         except Exception as exc:
-            self._connection.rollback()
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
             if isinstance(exc, RepositoryError):
                 raise
-            if _is_duplicate_key_error(exc):
-                raise RepositoryError("snapshot already exists for run_id and task_key") from exc
-            raise RepositoryError("failed to save keyword discovery snapshot") from exc
+            if operation == "snapshot" and _is_duplicate_key_error(exc):
+                raise TaskPersistenceError("snapshot already exists for run_id and task_key") from exc
+            error_codes = _sql_error_codes(exc)
+            if error_codes & _TASK_LOCAL_SQL_ERROR_CODES:
+                raise TaskPersistenceError("failed to save task-local keyword discovery data") from exc
+            raise FatalRepositoryError(
+                "failed to save keyword discovery snapshot: "
+                "database connection, target, schema, or authorization failed"
+            ) from exc
         finally:
             if cursor is not None:
                 cursor.close()
 
     def ping(self) -> bool:
-        cursor = self._connection.cursor()
+        cursor = None
         try:
+            cursor = self._connection.cursor()
             cursor.execute("SELECT 1")
             row = cursor.fetchone()
             return row is not None and row[0] == 1
         except Exception as exc:
             raise RepositoryError("database connection probe failed") from exc
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
+
+    def preflight(self, *, expected_database: str = "naverDB") -> None:
+        """Validate the read-only target and complete approved column contract."""
+
+        cursor = None
+        try:
+            cursor = self._connection.cursor()
+            cursor.execute("SELECT DB_NAME()")
+            database_row = cursor.fetchone()
+            actual_database = str(database_row[0]) if database_row else ""
+            if actual_database.casefold() != expected_database.casefold():
+                raise FatalRepositoryError(
+                    f"database target mismatch: expected {expected_database}"
+                )
+
+            cursor.execute(SCHEMA_COLUMNS_SQL)
+            rows = cursor.fetchall()
+            actual = {
+                (str(row[0]), str(row[1])): (
+                    str(row[2]).lower(),
+                    row[3],
+                    row[4],
+                    row[5],
+                    str(row[6]).upper(),
+                    int(row[7] or 0),
+                )
+                for row in rows
+            }
+            if actual != EXPECTED_SCHEMA_COLUMNS:
+                raise FatalRepositoryError("keyword discovery schema mismatch")
+        except FatalRepositoryError:
+            raise
+        except Exception as exc:
+            raise FatalRepositoryError("database target/schema preflight failed") from exc
+        finally:
+            if cursor is not None:
+                cursor.close()
 
     def close(self) -> None:
         self._connection.close()
@@ -170,3 +291,22 @@ def _result_values(snapshot_id: int, result: ParsedResult) -> tuple[object, ...]
 def _is_duplicate_key_error(exc: Exception) -> bool:
     details = " ".join(str(part) for part in exc.args).lower()
     return "2627" in details or "2601" in details
+
+
+def _sql_error_codes(exc: Exception) -> set[int]:
+    codes: set[int] = set()
+    pending = list(exc.args)
+    while pending:
+        part = pending.pop()
+        if isinstance(part, bool):
+            continue
+        if isinstance(part, int):
+            codes.add(part)
+        elif isinstance(part, (tuple, list)):
+            pending.extend(part)
+        else:
+            text = str(part)
+            for code in _FATAL_SQL_ERROR_CODES | _TASK_LOCAL_SQL_ERROR_CODES:
+                if str(code) in text:
+                    codes.add(code)
+    return codes

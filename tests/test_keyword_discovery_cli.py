@@ -12,7 +12,14 @@ from openpyxl import Workbook
 from scripts.keyword_discovery_rank import cli
 from scripts.keyword_discovery_rank.collector import RunSummary
 from scripts.keyword_discovery_rank.config import CollectorConfig
-from scripts.keyword_discovery_rank.models import CollectStatus, DeviceType, SearchTask, SourceType
+from scripts.keyword_discovery_rank.models import (
+    CollectStatus,
+    DeviceType,
+    MatchMethod,
+    ParsedResult,
+    SearchTask,
+    SourceType,
+)
 from scripts.keyword_discovery_rank.repository import RepositoryError
 
 
@@ -27,6 +34,9 @@ def write_input(path: Path, rows: list[list[object]]) -> Path:
     worksheet.append(HEADERS)
     for row in rows:
         worksheet.append(row)
+    stores = workbook.create_sheet("자사매장")
+    stores.append(["매장ID", "매장명", "네이버플레이스ID", "수동매핑플레이스ID"])
+    stores.append(["S1", "육수당 선릉점", "1001", "legacy-1001"])
     workbook.save(path)
     workbook.close()
     return path
@@ -55,14 +65,13 @@ def config(repo_root: Path) -> CollectorConfig:
         db_user="collector-writer",
         db_password="top-secret-password",
         db_encrypt=True,
-        db_trust_server_certificate=False,
         headless=True,
         timeout_seconds=30,
         artifact_root=repo_root / "artifacts" / "keyword_discovery_rank",
     )
 
 
-def test_parse_args_accepts_task7_interface_and_requires_positive_limit(tmp_path: Path):
+def test_parse_args_accepts_task7_interface_and_requires_bounded_limit(tmp_path: Path):
     args = cli.parse_args(
         [
             "--input",
@@ -87,6 +96,8 @@ def test_parse_args_accepts_task7_interface_and_requires_positive_limit(tmp_path
 
     with pytest.raises(SystemExit):
         cli.parse_args(["--input", str(tmp_path / "queries.xlsx"), "--limit", "0"])
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--input", str(tmp_path / "queries.xlsx"), "--limit", "21"])
 
 
 def test_excel_dry_run_validates_and_deduplicates_without_config_browser_or_database(
@@ -130,12 +141,19 @@ def test_excel_dry_run_validates_and_deduplicates_without_config_browser_or_data
     assert uuid_calls == [True]
 
 
-def test_database_dry_run_is_rejected_without_constructing_database_or_browser(
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_database_source_is_disabled_before_config_database_or_browser_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
 ):
     query_file = tmp_path / "candidates.sql"
     query_file.write_text("SELECT candidate_keyword FROM candidates", encoding="utf-8")
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: (_ for _ in ()).throw(AssertionError("config constructed"))),
+    )
     monkeypatch.setattr(
         cli,
         "_connect_database",
@@ -148,14 +166,19 @@ def test_database_dry_run_is_rejected_without_constructing_database_or_browser(
     )
     errors = StringIO()
 
+    argv = ["--input", str(query_file), "--source", "database"]
+    if dry_run:
+        argv.append("--dry-run")
     exit_code = cli.main(
-        ["--input", str(query_file), "--source", "database", "--dry-run"],
+        argv,
         repo_root=tmp_path,
         stderr=errors,
     )
 
     assert exit_code == 2
-    assert "database source cannot be validated in dry-run mode" in errors.getvalue()
+    assert errors.getvalue() == (
+        "error=database source is disabled in this release; use --source excel\n"
+    )
 
 
 def test_main_redacts_malformed_excel_loader_failure(
@@ -176,65 +199,6 @@ def test_main_redacts_malformed_excel_loader_failure(
     assert "workbook-secret" not in errors.getvalue()
 
 
-def test_main_redacts_database_task_query_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    query_file = tmp_path / "candidates.sql"
-    query_file.write_text("SELECT * FROM dbo.candidates", encoding="utf-8")
-    fake_config = config(tmp_path)
-    monkeypatch.setattr(
-        cli.CollectorConfig,
-        "from_env",
-        classmethod(lambda cls, repo_root: fake_config),
-    )
-
-    class FailingCursor:
-        def execute(self, query):
-            raise RuntimeError("query-secret")
-
-        def close(self):
-            pass
-
-    class FailingConnection:
-        def cursor(self):
-            return FailingCursor()
-
-        def close(self):
-            pass
-
-    connection = FailingConnection()
-    monkeypatch.setattr(cli, "_connect_database", lambda collector_config: connection)
-
-    class PreflightRepository:
-        def __init__(self, received_connection):
-            assert received_connection is connection
-
-        def ping(self):
-            return True
-
-        def close(self):
-            connection.close()
-
-    monkeypatch.setattr(cli, "SnapshotRepository", PreflightRepository)
-    monkeypatch.setattr(
-        cli,
-        "_make_browser_factory",
-        lambda collector_config: (_ for _ in ()).throw(AssertionError("browser created")),
-    )
-    errors = StringIO()
-
-    exit_code = cli.main(
-        ["--input", str(query_file), "--source", "database"],
-        repo_root=tmp_path,
-        stderr=errors,
-    )
-
-    assert exit_code == 2
-    assert errors.getvalue() == "error=database preflight or persistence failed\n"
-    assert "query-secret" not in errors.getvalue()
-
-
 def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_closes_resources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -245,8 +209,12 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
 
     monkeypatch.setattr(
         cli,
-        "_load_tasks",
-        lambda args, connection=None: events.append("input") or [source_task],
+        "_load_input",
+        lambda args: events.append("input") or cli.LoadedInput(
+            tasks=(source_task,),
+            own_stores=(cli.OwnStore("S1", "육수당 선릉점", "1001"),),
+            manual_place_id_mappings={"legacy-1001": "S1"},
+        ),
     )
     monkeypatch.setattr(
         cli.CollectorConfig,
@@ -270,9 +238,9 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
             assert received_connection is connection
             events.append("repository")
 
-        def ping(self):
-            events.append("db-ping")
-            return True
+        def preflight(self, *, expected_database):
+            assert expected_database == "naverDB"
+            events.append("db-preflight")
 
         def close(self):
             connection.close()
@@ -313,12 +281,15 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
         ):
             assert received_browser_factory is browser_factory
             assert options["result_limit"] == 7
+            assert options["review_export"] is False
             events.append("collector-construct")
 
         def run(self, tasks, run_id):
             tasks = list(tasks)
             assert tasks[0].device_type is DeviceType.PC
             assert run_id == str(RUN_ID)
+            assert output.getvalue() == f"run_id={RUN_ID}\n"
+            assert output.flush_calls == 1
             events.append("collector-run")
             return RunSummary(
                 run_id,
@@ -328,7 +299,14 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
             )
 
     monkeypatch.setattr(cli, "KeywordDiscoveryCollector", FakeCollector)
-    output = StringIO()
+    class TrackingOutput(StringIO):
+        flush_calls = 0
+
+        def flush(self):
+            self.flush_calls += 1
+            super().flush()
+
+    output = TrackingOutput()
     uuid_calls = []
 
     exit_code = cli.main(
@@ -351,7 +329,7 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
         "config",
         "db-connect",
         "repository",
-        "db-ping",
+        "db-preflight",
         "browser-factory",
         "chrome-preflight",
         "preflight-browser-close",
@@ -361,6 +339,7 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
     ]
     assert uuid_calls == [True]
     assert output.getvalue() == (
+        f"run_id={RUN_ID}\n"
         f"run_id={RUN_ID} total=1 processed=1 SUCCESS=1 persistence_failures=0 aborted=false\n"
     )
     assert fake_config.db_password not in output.getvalue()
@@ -458,6 +437,98 @@ def test_database_connection_failure_is_wrapped_without_exposing_password(
 
     assert str(caught.value) == "database connection failed"
     assert collector_config.db_password not in str(caught.value)
+
+
+def test_real_cli_input_wires_authoritative_workbook_identity_into_matcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    input_path = write_input(
+        tmp_path / "queries.xlsx",
+        [["선릉역 국밥", "S1", "표시용 별칭", "선릉점", 37.5048, 127.0489, "MOBILE", "1"]],
+    )
+    fake_config = config(tmp_path)
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: fake_config),
+    )
+
+    class FakeConnection:
+        def close(self):
+            pass
+
+    connection = FakeConnection()
+    monkeypatch.setattr(cli, "_connect_database", lambda collector_config: connection)
+
+    class FakeRepository:
+        def __init__(self, received_connection):
+            assert received_connection._connection is connection
+
+        def preflight(self, *, expected_database):
+            assert expected_database == "naverDB"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cli, "SnapshotRepository", FakeRepository)
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    class FakeBrowserFactory:
+        def create(self, *args):
+            return FakeSession()
+
+    monkeypatch.setattr(cli, "_make_browser_factory", lambda collector_config: FakeBrowserFactory())
+
+    class FakeCollector:
+        def __init__(self, browser_factory, parser, validator, matcher, repository, **options):
+            assert options["review_export"] is True
+            redacted = options["redact"](f"failure {fake_config.db_password}")
+            assert redacted == "failure [REDACTED]"
+            options["retry_logger"](f"retry message={redacted}")
+            canonical = ParsedResult(
+                1,
+                1,
+                "1001",
+                "경쟁점처럼 보이는 이름",
+                None,
+                False,
+                "https://m.place.naver.com/restaurant/1001",
+                None,
+            )
+            manual = ParsedResult(
+                2,
+                2,
+                "legacy-1001",
+                "다른 이름",
+                None,
+                False,
+                "https://m.place.naver.com/restaurant/legacy-1001",
+                None,
+            )
+            assert matcher.match(canonical).match_method is MatchMethod.PLACE_ID
+            assert matcher.match(manual).match_method is MatchMethod.MANUAL_MAPPING
+
+        def run(self, tasks, run_id):
+            return RunSummary(run_id, 1, 1, {CollectStatus.SUCCESS: 1})
+
+    monkeypatch.setattr(cli, "KeywordDiscoveryCollector", FakeCollector)
+
+    errors = StringIO()
+    assert (
+        cli.main(
+            ["--input", str(input_path), "--rollback-test"],
+            repo_root=tmp_path,
+            stdout=StringIO(),
+            stderr=errors,
+        )
+        == 0
+    )
+    assert errors.getvalue() == "retry message=failure [REDACTED]\n"
+    assert fake_config.db_password not in errors.getvalue()
 
 
 def test_script_entrypoint_exposes_cli_help_without_external_clients():

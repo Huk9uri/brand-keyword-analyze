@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -22,6 +23,7 @@ from .browser import (
 )
 from .models import CollectStatus, ParsedResult, SearchPage, SearchSnapshot, SearchTask
 from .parser import PARSER_VERSION
+from .repository import FatalRepositoryError, TaskPersistenceError
 from .task_source import build_task_key, normalize_query
 
 
@@ -63,6 +65,14 @@ class _FinalAttempt:
     html: str
     retryable: bool = False
     session_damaged: bool = False
+    retry_history: tuple["RetryRecord", ...] = ()
+
+
+@dataclass(frozen=True)
+class RetryRecord:
+    attempt: int
+    status: CollectStatus
+    message: str
 
 
 class KeywordDiscoveryCollector:
@@ -81,9 +91,16 @@ class KeywordDiscoveryCollector:
         max_retries: int = 2,
         failure_limit: int = 5,
         clock: Callable[[], datetime] = datetime.now,
+        review_export: bool = False,
+        redact: Callable[[str], str] = lambda value: value,
+        retry_logger: Callable[[str], None] = lambda value: None,
     ) -> None:
-        if isinstance(result_limit, bool) or not isinstance(result_limit, int) or result_limit <= 0:
-            raise ValueError("result_limit must be a positive integer")
+        if (
+            isinstance(result_limit, bool)
+            or not isinstance(result_limit, int)
+            or not 1 <= result_limit <= 20
+        ):
+            raise ValueError("result_limit must be between 1 and 20")
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
             raise ValueError("max_retries must be a non-negative integer")
         if isinstance(failure_limit, bool) or not isinstance(failure_limit, int) or failure_limit <= 0:
@@ -99,6 +116,9 @@ class KeywordDiscoveryCollector:
         self.max_retries = max_retries
         self.failure_limit = failure_limit
         self.clock = clock
+        self.review_export = review_export
+        self.redact = redact
+        self.retry_logger = retry_logger
         self._session: Any | None = None
         self._session_profile: tuple[object, ...] | None = None
 
@@ -116,13 +136,20 @@ class KeywordDiscoveryCollector:
             for task in unique_tasks:
                 task_key = build_task_key(task)
                 final_attempt = self._run_task(task, task_key, run_id)
-                if final_attempt.snapshot.collect_status in EVIDENCE_STATUSES:
+                failure = _failure_identity(final_attempt.snapshot)
+                if self.review_export or final_attempt.snapshot.collect_status in EVIDENCE_STATUSES:
                     final_attempt = self._save_evidence(final_attempt)
+                if self.review_export:
+                    self._save_structured_export(final_attempt)
 
                 try:
                     self.repository.save(final_attempt.snapshot, final_attempt.results)
-                except Exception:
+                except TaskPersistenceError:
                     persistence_failures += 1
+                except FatalRepositoryError:
+                    raise
+                except Exception as exc:
+                    raise FatalRepositoryError("unclassified repository failure") from exc
 
                 processed_tasks += 1
                 status = final_attempt.snapshot.collect_status
@@ -131,7 +158,6 @@ class KeywordDiscoveryCollector:
                 if final_attempt.session_damaged:
                     self._discard_session()
 
-                failure = _failure_identity(final_attempt.snapshot)
                 if failure is None:
                     previous_failure = None
                     consecutive_failures = 0
@@ -161,6 +187,7 @@ class KeywordDiscoveryCollector:
     def _run_task(self, task: SearchTask, task_key: str, run_id: str) -> _FinalAttempt:
         final_attempt: _FinalAttempt | None = None
         total_attempts = self.max_retries + 1
+        retry_history: list[RetryRecord] = []
 
         for attempt_number in range(1, total_attempts + 1):
             try:
@@ -171,6 +198,17 @@ class KeywordDiscoveryCollector:
                 if final_attempt.session_damaged and attempt_number < total_attempts:
                     self._discard_session()
                 if attempt_number < total_attempts:
+                    record = RetryRecord(
+                        attempt=attempt_number,
+                        status=final_attempt.snapshot.collect_status,
+                        message=final_attempt.snapshot.collect_msg or "",
+                    )
+                    retry_history.append(record)
+                    self.retry_logger(
+                        "retry "
+                        f"task_key={task_key} attempt={attempt_number}/{total_attempts} "
+                        f"status={record.status.value} message={record.message}"
+                    )
                     continue
                 break
 
@@ -231,7 +269,7 @@ class KeywordDiscoveryCollector:
             break
 
         assert final_attempt is not None
-        return final_attempt
+        return replace(final_attempt, retry_history=tuple(retry_history))
 
     def _ensure_session(self, task: SearchTask) -> Any:
         profile = (task.device_type, task.latitude, task.longitude)
@@ -262,7 +300,7 @@ class KeywordDiscoveryCollector:
                 task_key,
                 run_id,
                 status=status,
-                message=str(error),
+                message=self.redact(str(error)),
                 final_url=getattr(error, "last_url", "") or "",
                 observed_result_count=observed_count,
                 result_end_reached=end_reached,
@@ -289,7 +327,7 @@ class KeywordDiscoveryCollector:
                 task_key,
                 run_id,
                 status=status,
-                message=str(error),
+                message=self.redact(str(error)),
                 final_url=page.final_url,
                 observed_result_count=observed_count,
                 result_end_reached=end_reached,
@@ -334,6 +372,12 @@ class KeywordDiscoveryCollector:
             else:
                 _write_fallback_evidence(directory, final_attempt.html)
         except Exception as exc:
+            if self.review_export:
+                raise BrowserSessionError(
+                    "review evidence capture failed",
+                    last_url=snapshot.final_url,
+                    html=final_attempt.html,
+                ) from exc
             try:
                 _write_fallback_evidence(directory, final_attempt.html)
             except OSError:
@@ -349,6 +393,28 @@ class KeywordDiscoveryCollector:
             )
         return final_attempt
 
+    def _save_structured_export(self, final_attempt: _FinalAttempt) -> Path:
+        snapshot = final_attempt.snapshot
+        directory = self.artifact_root / snapshot.run_id / snapshot.task_key
+        directory.mkdir(parents=True, exist_ok=True)
+        export_path = directory / "snapshot-results.json"
+        payload = {
+            "format_version": 1,
+            "snapshot": _snapshot_export(snapshot),
+            "results": [_result_export(result) for result in final_attempt.results],
+            "retry_history": [
+                {
+                    "attempt": record.attempt,
+                    "status": record.status.value,
+                    "message": record.message,
+                }
+                for record in final_attempt.retry_history
+            ],
+        }
+        rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+        export_path.write_text(self.redact(rendered) + "\n", encoding="utf-8")
+        return export_path
+
     def _discard_session(self) -> None:
         session = self._session
         self._session = None
@@ -360,8 +426,9 @@ class KeywordDiscoveryCollector:
             try:
                 close()
             except Exception:
+                pass
+            else:
                 return
-            return
         driver = getattr(session, "driver", None)
         quit_driver = getattr(driver, "quit", None)
         if callable(quit_driver):
@@ -421,3 +488,45 @@ def _write_fallback_evidence(directory: Path, html: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "page.html").write_text(html, encoding="utf-8")
     (directory / "screenshot.png").write_bytes(_EMPTY_PNG)
+
+
+def _snapshot_export(snapshot: SearchSnapshot) -> dict[str, object]:
+    task = snapshot.task
+    return {
+        "run_id": snapshot.run_id,
+        "task_key": snapshot.task_key,
+        "query": task.query,
+        "normalized_query": snapshot.normalized_query,
+        "target_store_id": task.target_store_id,
+        "target_store_name": task.target_store_name,
+        "location_name": task.location_name,
+        "latitude": task.latitude,
+        "longitude": task.longitude,
+        "device_type": task.device_type.value,
+        "source_type": task.source_type.value,
+        "source_id": task.source_id,
+        "requested_result_limit": snapshot.requested_result_limit,
+        "observed_result_count": snapshot.observed_result_count,
+        "result_end_reached": snapshot.result_end_reached,
+        "collect_status": snapshot.collect_status.value,
+        "collect_msg": snapshot.collect_msg,
+        "parser_version": snapshot.parser_version,
+        "final_url": snapshot.final_url,
+        "collected_at": snapshot.collected_at.isoformat(),
+    }
+
+
+def _result_export(result: ParsedResult) -> dict[str, object]:
+    return {
+        "raw_position": result.raw_position,
+        "organic_rank": result.organic_rank,
+        "place_id": result.place_id,
+        "place_name": result.place_name,
+        "category": result.category,
+        "is_ad": result.is_ad,
+        "detail_url": result.detail_url,
+        "distance_text": result.distance_text,
+        "is_own_store": result.is_own_store,
+        "matched_store_id": result.matched_store_id,
+        "match_method": result.match_method.value,
+    }

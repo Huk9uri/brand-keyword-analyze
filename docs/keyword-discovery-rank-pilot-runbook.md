@@ -8,7 +8,12 @@ database. Do not start the persistence pilot from CI or unattended automation.
 
 1. Prepare `inputs/keyword_discovery_queries.xlsx` by copying
    `inputs/keyword_discovery_queries.example.xlsx`, then populate and validate its
-   `검색작업` worksheet. The generic workbook is an input-format reference; create
+   `검색작업` worksheet. Populate the separate `자사매장` worksheet with one
+   authoritative identity per task store: `매장ID`, `매장명`,
+   `네이버플레이스ID`, and optional `수동매핑플레이스ID`. Repeat a consistent
+   store row when more than one manual place-ID mapping is required. Every
+   `검색작업.기준매장ID` must be present in `자사매장`; task rows remain separate
+   from identity/mapping data. The generic workbook is an input-format reference; create
    the scope-specific workbooks named in [Pilot datasets](#pilot-datasets) for any
    actual pilot stage.
 2. Set the collector database and browser configuration in the local `.env` only.
@@ -27,6 +32,19 @@ database. Do not start the persistence pilot from CI or unattended automation.
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_queries.xlsx --dry-run
 ```
+
+The current release supports Excel input only. `--source database` always exits
+with a safe error before configuration, database, or Chrome construction. The
+`DatabaseTaskSource` code remains a future adapter, but it must not be enabled
+until a separately provisioned read-only source principal and configuration have
+been approved.
+
+For every non-dry run, the collector connects to the configured database and,
+before Chrome is created, runs read-only checks that `DB_NAME()` is `naverDB` and
+that the two approved tables expose exactly the required 33-column signature.
+Target, schema, authentication, authorization, or connection failures stop the
+whole run. Only task-local insert/data failures may be counted and followed by the
+next task.
 
 ## Mandatory generic command reference (syntax only)
 
@@ -62,11 +80,29 @@ and source ID. For the comparison workbook, keep each mobile/PC pair adjacent an
 use the same query, target store, and location/coordinates; only `기기` differs.
 
 Record the input file hash, reviewer, date, browser version, configured result
-limit, and generated run ID before every live run. Keep workbook duplicates in the
+limit, and generated run ID before every live run. The CLI emits and flushes the
+run ID immediately before the first search; copy that first line into the review
+record before evaluating any task. Keep workbook duplicates in the
 input deliberately only when validating deduplication; remove accidental duplicates
 from the pilot dataset.
 
 ## Manual review sheet
+
+Rollback mode produces a deterministic, non-DB review bundle for every final
+task attempt, including successful and no-result tasks:
+
+```text
+artifacts/keyword_discovery_rank/{run_id}/{task_key}/page.html
+artifacts/keyword_discovery_rank/{run_id}/{task_key}/screenshot.png
+artifacts/keyword_discovery_rank/{run_id}/{task_key}/snapshot-results.json
+```
+
+`snapshot-results.json` contains the final snapshot fields, ordered result-card
+rows, and redacted retry history. Use it as the structured side of the manual
+comparison and use the final HTML/screenshot as the visual side. If any of the
+three files is absent, unreadable, mismatched to the run/task key, or contains an
+unredacted configured secret, fail the stage. Do not substitute rolled-back DB
+rows for the structured export.
 
 For every reviewed task/result, capture the following fields from the rendered DOM
 and the collector output:
@@ -113,7 +149,8 @@ Perform each stage only after the previous stage meets every acceptance gate.
    it is not an environment-setup command and must not be run against any larger
    workbook. Manually compare all five (or all end-confirmed short) rendered DOM
    cards with the review sheet. Confirm query, place ID, raw/organic rank,
-   advertising, and own-store classification.
+   advertising, and own-store classification using every card in
+   `snapshot-results.json` against its final HTML and screenshot.
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_smoke_one_query_limit5.xlsx --limit 5 --rollback-test
@@ -121,14 +158,23 @@ Perform each stage only after the previous stage meets every acceptance gate.
 
 2. **Three queries, limit 20, rollback.** Use three independent mobile queries,
    execute the exact command below, and review all result cards and every end
-   marker. Confirm no result from one task appears in another task's evidence or
+   marker. Confirm each task has all three review-bundle files, retry history is
+   redacted, and no result from one task appears in another task's evidence or
    output.
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_smoke_three_queries_limit20.xlsx --limit 20 --rollback-test
    ```
 
-3. **One store, five keywords, persistence.** After the two rollback stages pass,
+3. **One store, five keywords, rollback rehearsal.** Run the canonical five-task
+   input with `--rollback-test` and evaluate the same card-level and artifact gates
+   before authorizing writes.
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_one_store_five_keywords.xlsx --limit 20 --rollback-test
+   ```
+
+4. **One store, five keywords, persistence.** After all three rollback stages pass,
    use the canonical five-task input and run without `--rollback-test`. This is the
    first permitted persistent write; do not expand to the 25-task pilot before its
    manual review passes.
@@ -137,7 +183,9 @@ Perform each stage only after the previous stage meets every acceptance gate.
    .\.venv\Scripts\python.exe scripts\run_keyword_discovery_rank.py --input inputs\keyword_discovery_one_store_five_keywords.xlsx --limit 20
    ```
 
-For the persistence stage, inspect only the two new tables:
+No live command in this runbook was executed as part of implementation. The
+following persistence-stage queries and commands are staged acceptance steps for
+an authorized operator. For the persistence stage, inspect only the two new tables:
 
 ```sql
 SELECT *

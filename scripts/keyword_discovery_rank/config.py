@@ -19,13 +19,20 @@ class CollectorConfig:
     db_user: str
     db_password: str
     db_encrypt: bool
-    db_trust_server_certificate: bool
     headless: bool
     timeout_seconds: int
     artifact_root: Path
     result_limit: int = 20
     max_retries: int = 2
     failure_limit: int = 5
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.result_limit, bool)
+            or not isinstance(self.result_limit, int)
+            or not 1 <= self.result_limit <= 20
+        ):
+            raise ConfigError("result_limit must be between 1 and 20")
 
     @classmethod
     def from_env(cls, repo_root: Path) -> "CollectorConfig":
@@ -65,10 +72,6 @@ class CollectorConfig:
             db_user=values["KEYWORD_DISCOVERY_DB_USER"].strip(),
             db_password=values["KEYWORD_DISCOVERY_DB_PASSWORD"].strip(),
             db_encrypt=_parse_bool(values.get("DB_ENCRYPT", "true"), "DB_ENCRYPT"),
-            db_trust_server_certificate=_parse_bool(
-                values.get("DB_TRUST_SERVER_CERTIFICATE", "false"),
-                "DB_TRUST_SERVER_CERTIFICATE",
-            ),
             headless=_parse_bool(values.get("KEYWORD_DISCOVERY_HEADLESS", "true"), "KEYWORD_DISCOVERY_HEADLESS"),
             timeout_seconds=_parse_positive_int(
                 values.get("KEYWORD_DISCOVERY_TIMEOUT_SECONDS", "30"),
@@ -85,7 +88,6 @@ class CollectorConfig:
             "db_user": self.db_user,
             "db_password": "***",
             "db_encrypt": self.db_encrypt,
-            "db_trust_server_certificate": self.db_trust_server_certificate,
             "headless": self.headless,
             "timeout_seconds": self.timeout_seconds,
             "artifact_root": str(self.artifact_root),

@@ -5,11 +5,14 @@ import math
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from openpyxl import load_workbook
 
+from .matching import OwnStore
 from .models import DeviceType, SearchTask, SourceType
 
 
@@ -24,6 +27,22 @@ EXCEL_HEADERS = (
     "소스ID",
 )
 REQUIRED_EXCEL_HEADERS = EXCEL_HEADERS[:6]
+OWN_STORE_SHEET = "자사매장"
+OWN_STORE_HEADERS = ("매장ID", "매장명", "네이버플레이스ID", "수동매핑플레이스ID")
+
+
+@dataclass(frozen=True)
+class ExcelWorkbookInput:
+    tasks: tuple[SearchTask, ...]
+    own_stores: tuple[OwnStore, ...]
+    manual_place_id_mappings: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "manual_place_id_mappings",
+            MappingProxyType(dict(self.manual_place_id_mappings)),
+        )
 
 
 class InputValidationError(ValueError):
@@ -47,7 +66,9 @@ class ExcelTaskSource(TaskSource):
     def load(self) -> list[SearchTask]:
         workbook = load_workbook(self.path, read_only=True, data_only=True)
         try:
-            worksheet = workbook["검색작업"] if "검색작업" in workbook.sheetnames else workbook.active
+            if "검색작업" not in workbook.sheetnames:
+                raise InputValidationError(["required worksheet is missing: 검색작업"])
+            worksheet = workbook["검색작업"]
             rows = worksheet.iter_rows(values_only=True)
             try:
                 header_row = next(rows)
@@ -95,6 +116,30 @@ class ExcelTaskSource(TaskSource):
             return tasks
         finally:
             workbook.close()
+
+    def load_bundle(self) -> ExcelWorkbookInput:
+        """Load task rows plus the separate authoritative own-store identity sheet."""
+
+        tasks = tuple(self.load())
+        workbook = load_workbook(self.path, read_only=True, data_only=True)
+        try:
+            if OWN_STORE_SHEET not in workbook.sheetnames:
+                raise InputValidationError([f"required worksheet is missing: {OWN_STORE_SHEET}"])
+            own_stores, manual_mappings = _load_own_store_identity(workbook[OWN_STORE_SHEET])
+        finally:
+            workbook.close()
+
+        missing_store_ids = sorted(
+            {task.target_store_id for task in tasks} - {store.store_id for store in own_stores}
+        )
+        if missing_store_ids:
+            raise InputValidationError(
+                [
+                    f"{OWN_STORE_SHEET}: missing identity for task store IDs: "
+                    + ", ".join(missing_store_ids)
+                ]
+            )
+        return ExcelWorkbookInput(tasks, own_stores, manual_mappings)
 
 
 class DatabaseTaskSource(TaskSource):
@@ -144,6 +189,82 @@ class DatabaseTaskSource(TaskSource):
 
 def normalize_query(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _load_own_store_identity(worksheet: Any) -> tuple[tuple[OwnStore, ...], dict[str, str]]:
+    rows = worksheet.iter_rows(values_only=True)
+    try:
+        header_row = next(rows)
+    except StopIteration as exc:
+        raise InputValidationError([f"{OWN_STORE_SHEET} row 1: header row is required"]) from exc
+
+    headers = {str(value).strip(): index for index, value in enumerate(header_row) if value is not None}
+    missing_headers = [header for header in OWN_STORE_HEADERS if header not in headers]
+    if missing_headers:
+        raise InputValidationError(
+            [f"{OWN_STORE_SHEET} row 1: missing required headers: " + ", ".join(missing_headers)]
+        )
+
+    stores_by_id: dict[str, OwnStore] = {}
+    canonical_place_ids: dict[str, str] = {}
+    manual_mappings: dict[str, str] = {}
+    errors: list[str] = []
+    for row_number, row in enumerate(rows, start=2):
+        values = {
+            header: _text(_value_at(row, headers[header]))
+            for header in OWN_STORE_HEADERS
+        }
+        if not any(values.values()):
+            continue
+        store_id = values["매장ID"]
+        store_name = values["매장명"]
+        place_id = values["네이버플레이스ID"]
+        manual_place_id = values["수동매핑플레이스ID"]
+        missing = [
+            name
+            for value, name in (
+                (store_id, "store_id"),
+                (store_name, "store_name"),
+                (place_id, "naver_place_id"),
+            )
+            if not value
+        ]
+        if missing:
+            errors.append(
+                f"{OWN_STORE_SHEET} row {row_number}: required values missing: "
+                + ", ".join(missing)
+            )
+            continue
+
+        store = OwnStore(store_id, store_name, place_id)
+        existing_store = stores_by_id.get(store_id)
+        if existing_store is not None and existing_store != store:
+            errors.append(f"{OWN_STORE_SHEET} row {row_number}: conflicting identity for {store_id}")
+            continue
+        other_store_id = canonical_place_ids.get(place_id)
+        if other_store_id is not None and other_store_id != store_id:
+            errors.append(
+                f"{OWN_STORE_SHEET} row {row_number}: place ID {place_id} belongs to multiple stores"
+            )
+            continue
+        stores_by_id.setdefault(store_id, store)
+        canonical_place_ids[place_id] = store_id
+
+        if manual_place_id:
+            mapped_store_id = manual_mappings.get(manual_place_id)
+            if mapped_store_id is not None and mapped_store_id != store_id:
+                errors.append(
+                    f"{OWN_STORE_SHEET} row {row_number}: manual place ID {manual_place_id} "
+                    "belongs to multiple stores"
+                )
+                continue
+            manual_mappings[manual_place_id] = store_id
+
+    if errors:
+        raise InputValidationError(errors)
+    if not stores_by_id:
+        raise InputValidationError([f"{OWN_STORE_SHEET}: at least one own store is required"])
+    return tuple(stores_by_id.values()), manual_mappings
 
 
 def build_task_key(task: SearchTask) -> str:

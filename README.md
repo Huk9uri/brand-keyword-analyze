@@ -39,3 +39,17 @@
 [`docs/keyword-discovery-rank-pilot-runbook.md`](docs/keyword-discovery-rank-pilot-runbook.md)의
 통제된 파일럿 절차를 따라 실행합니다. 먼저 `--dry-run`으로 입력 파일을 검증하고,
 라이브 수집·DB 저장은 해당 문서의 롤백 단계와 수동 검토를 마친 뒤에만 진행합니다.
+
+입력 파일은 `검색작업` 시트와 별도의 `자사매장` 시트를 모두 사용합니다.
+`자사매장`에는 매장 ID·공식 매장명·네이버 플레이스 ID·선택적 수동 매핑
+플레이스 ID를 기록하며, 모든 검색 작업의 기준 매장 ID가 이 시트에 있어야 합니다.
+현재 릴리스의 CLI는 안전상 `--source excel`만 실행하며 `--source database`는
+DB나 브라우저를 만들기 전에 종료합니다. `DatabaseTaskSource`는 향후 전용 읽기
+계정이 준비될 때를 위한 인터페이스로만 유지됩니다.
+
+실행 모드는 Chrome 생성 전에 `naverDB` 대상과 신규 두 테이블의 정확한 컬럼
+구조를 읽기 전용으로 확인합니다. 첫 검색 직전에는 `run_id`를 출력하고 즉시
+flush합니다. `--rollback-test`는 DB 커밋을 롤백하는 동시에 각 작업 디렉터리에
+최종 `page.html`, `screenshot.png`, `snapshot-results.json`을 남겨 카드 단위
+수동 검토가 가능하게 합니다. 재시도 진단과 구조화 산출물의 구성값 비밀은
+`[REDACTED]`로 치환됩니다.

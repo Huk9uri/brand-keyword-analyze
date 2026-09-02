@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import hashlib
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +25,7 @@ from scripts.keyword_discovery_rank.models import (
     SourceType,
 )
 from scripts.keyword_discovery_rank.parser import DomResultParser
+from scripts.keyword_discovery_rank.repository import FatalRepositoryError, TaskPersistenceError
 from scripts.keyword_discovery_rank.task_source import build_task_key
 from scripts.keyword_discovery_rank.validation import ResultValidator
 
@@ -113,6 +116,16 @@ class EvidenceDamagedSession(FakeSession):
         )
 
 
+class PathReportingEvidenceSession(FakeSession):
+    def save_evidence(self, directory: Path, *, html: str | None = None):
+        raise OSError(f"cannot capture {directory}")
+
+
+class CloseFailSession(FakeSession):
+    def close(self):
+        raise RuntimeError("close failed")
+
+
 class FakeBrowserFactory:
     def __init__(self, sessions) -> None:
         self.sessions = deque(sessions)
@@ -144,14 +157,23 @@ def browser_error(error_type, message="temporary failure", *, html=SUCCESS_HTML)
     return error_type(message, last_url=SEARCH_URL, html=html)
 
 
+def artifact_root(tmp_path: Path) -> Path:
+    suffix = hashlib.sha256(str(tmp_path).encode("utf-8")).hexdigest()[:8]
+    return tmp_path.parent / "a" / suffix
+
+
 def collector(
     tmp_path: Path,
     sessions,
     *,
     parser=None,
     failure_limit: int = 5,
+    review_export: bool = False,
+    redact=lambda value: value,
+    retry_logger=lambda value: None,
+    repository=None,
 ):
-    repository = FakeRepository()
+    repository = repository or FakeRepository()
     factory = FakeBrowserFactory(sessions)
     instance = KeywordDiscoveryCollector(
         factory,
@@ -159,11 +181,14 @@ def collector(
         ResultValidator(),
         OwnStoreMatcher((OwnStore("S1", "육수당 선릉점", "1001"),)),
         repository,
-        artifact_root=tmp_path / "artifacts" / "keyword_discovery_rank",
+        artifact_root=artifact_root(tmp_path),
         result_limit=20,
         max_retries=2,
         failure_limit=failure_limit,
         clock=lambda: datetime(2026, 9, 2, 12, 0, 0),
+        review_export=review_export,
+        redact=redact,
+        retry_logger=retry_logger,
     )
     return instance, factory, repository
 
@@ -216,7 +241,7 @@ def test_transient_failure_then_success_retries_without_persisting_or_evidence_f
     assert session.search_calls == 2
     assert len(repository.saved) == 1
     assert session.evidence_directories == []
-    assert not (tmp_path / "artifacts").exists()
+    assert not artifact_root(tmp_path).exists()
 
 
 @pytest.mark.parametrize(
@@ -247,7 +272,7 @@ def test_three_exhausted_attempts_persist_only_final_attempt_and_evidence(
     assert snapshot.observed_result_count == 1
     assert snapshot.result_end_reached is True
     assert results == ()
-    evidence = tmp_path / "artifacts" / "keyword_discovery_rank" / "run-exhausted" / build_task_key(search_task)
+    evidence = artifact_root(tmp_path) / "run-exhausted" / build_task_key(search_task)
     assert (evidence / "page.html").read_text(encoding="utf-8") == SUCCESS_HTML
     assert (evidence / "screenshot.png").read_bytes() == b"png"
     assert summary.status_counts == {expected_status: 1}
@@ -264,7 +289,7 @@ def test_no_result_is_not_retried_and_has_no_evidence(tmp_path: Path):
     assert repository.saved[0][0].collect_status is CollectStatus.NO_RESULT
     assert repository.saved[0][1] == ()
     assert summary.status_counts == {CollectStatus.NO_RESULT: 1}
-    assert not (tmp_path / "artifacts").exists()
+    assert not artifact_root(tmp_path).exists()
 
 
 def test_no_result_state_ignores_stale_result_cards_and_persists_zero_rows(tmp_path: Path):
@@ -281,7 +306,7 @@ def test_no_result_state_ignores_stale_result_cards_and_persists_zero_rows(tmp_p
     assert snapshot.result_end_reached is True
     assert results == ()
     assert summary.status_counts == {CollectStatus.NO_RESULT: 1}
-    assert not (tmp_path / "artifacts").exists()
+    assert not artifact_root(tmp_path).exists()
 
 
 def test_parser_structure_failure_is_not_retried_but_saves_evidence(tmp_path: Path):
@@ -296,7 +321,7 @@ def test_parser_structure_failure_is_not_retried_but_saves_evidence(tmp_path: Pa
     assert snapshot.collect_status is CollectStatus.PARSER_ERROR
     assert "required result-card structure changed" in snapshot.collect_msg
     assert results == ()
-    evidence = tmp_path / "artifacts" / "keyword_discovery_rank" / "run-parser-error" / build_task_key(search_task)
+    evidence = artifact_root(tmp_path) / "run-parser-error" / build_task_key(search_task)
     assert (evidence / "page.html").exists()
     assert (evidence / "screenshot.png").exists()
 
@@ -312,6 +337,15 @@ def test_browser_session_damage_closes_and_recreates_session_before_retry(tmp_pa
     assert damaged.driver.quit_calls == 1
     assert replacement.driver.quit_calls == 1
     assert repository.saved[0][0].collect_status is CollectStatus.SUCCESS
+
+
+def test_session_close_failure_falls_back_to_driver_quit(tmp_path: Path):
+    session = CloseFailSession([success_page()])
+    instance, _, _ = collector(tmp_path, [session])
+
+    instance.run([task()], "run-close-fallback")
+
+    assert session.driver.quit_calls == 1
 
 
 def test_evidence_session_damage_closes_and_recreates_before_next_same_profile_task(
@@ -386,6 +420,21 @@ def test_aborts_after_five_identical_consecutive_final_failures(tmp_path: Path):
     assert session.search_calls == 15
 
 
+def test_evidence_diagnostics_do_not_change_identical_failure_abort_identity(tmp_path: Path):
+    repeated_failures = [browser_error(SearchStateTimeout, "same timeout") for _ in range(6)]
+    session = PathReportingEvidenceSession(repeated_failures)
+    instance, _, repository = collector(tmp_path, [session], failure_limit=2)
+
+    summary = instance.run(
+        [task(1), task(2, query="강남역 국밥"), task(3, query="역삼역 국밥")],
+        "run-evidence-identity",
+    )
+
+    assert summary.aborted is True
+    assert summary.processed_tasks == 2
+    assert len(repository.saved) == 2
+
+
 def test_validation_error_and_success_do_not_write_evidence(tmp_path: Path):
     validation_error_html = """
     <li data-naver-place-card data-place-id="1001">
@@ -399,7 +448,7 @@ def test_validation_error_and_success_do_not_write_evidence(tmp_path: Path):
     instance.run([task()], "run-validation-error")
 
     assert repository.saved[0][0].collect_status is CollectStatus.VALIDATION_ERROR
-    assert not (tmp_path / "artifacts").exists()
+    assert not artifact_root(tmp_path).exists()
 
 
 def test_partial_writes_evidence_and_caps_collection_message_at_1000_characters(tmp_path: Path):
@@ -418,7 +467,7 @@ def test_partial_writes_evidence_and_caps_collection_message_at_1000_characters(
         LongMessageValidator(),
         OwnStoreMatcher((OwnStore("S1", "육수당 선릉점", "1001"),)),
         repository,
-        artifact_root=tmp_path / "artifacts" / "keyword_discovery_rank",
+        artifact_root=artifact_root(tmp_path),
         result_limit=20,
         clock=lambda: datetime(2026, 9, 2, 12, 0, 0),
     )
@@ -428,6 +477,142 @@ def test_partial_writes_evidence_and_caps_collection_message_at_1000_characters(
     snapshot, _ = repository.saved[0]
     assert snapshot.collect_status is CollectStatus.PARTIAL
     assert len(snapshot.collect_msg) == 1000
-    evidence = tmp_path / "artifacts" / "keyword_discovery_rank" / "run-partial" / build_task_key(search_task)
+    evidence = artifact_root(tmp_path) / "run-partial" / build_task_key(search_task)
     assert (evidence / "page.html").exists()
     assert (evidence / "screenshot.png").exists()
+
+
+@pytest.mark.parametrize("result_limit", [0, 21])
+def test_collector_rejects_result_limit_outside_naver_boundary(tmp_path: Path, result_limit: int):
+    with pytest.raises(ValueError, match="between 1 and 20"):
+        KeywordDiscoveryCollector(
+            FakeBrowserFactory([]),
+            DomResultParser(),
+            ResultValidator(),
+            OwnStoreMatcher(()),
+            FakeRepository(),
+            artifact_root=tmp_path,
+            result_limit=result_limit,
+        )
+
+
+def test_review_export_writes_success_html_screenshot_and_structured_final_result(tmp_path: Path):
+    search_task = task()
+    session = FakeSession([success_page()])
+    instance, _, _ = collector(tmp_path, [session], review_export=True)
+
+    instance.run([search_task], "run-review")
+
+    directory = artifact_root(tmp_path) / "run-review" / build_task_key(search_task)
+    assert (directory / "page.html").read_text(encoding="utf-8") == SUCCESS_HTML
+    assert (directory / "screenshot.png").read_bytes() == b"png"
+    export = json.loads((directory / "snapshot-results.json").read_text(encoding="utf-8"))
+    assert export == {
+        "format_version": 1,
+        "results": [
+            {
+                "category": None,
+                "detail_url": "https://m.place.naver.com/restaurant/1001",
+                "distance_text": None,
+                "is_ad": False,
+                "is_own_store": True,
+                "match_method": "PLACE_ID",
+                "matched_store_id": "S1",
+                "organic_rank": 1,
+                "place_id": "1001",
+                "place_name": "육수당 선릉점",
+                "raw_position": 1,
+            }
+        ],
+        "retry_history": [],
+        "snapshot": {
+            "collect_msg": None,
+            "collect_status": "SUCCESS",
+            "collected_at": "2026-09-02T12:00:00",
+            "device_type": "MOBILE",
+            "final_url": SEARCH_URL,
+            "latitude": 37.5048,
+            "location_name": "선릉점",
+            "longitude": 127.0489,
+            "normalized_query": "선릉역 국밥",
+            "observed_result_count": 1,
+            "parser_version": "dom-v1",
+            "query": "선릉역 국밥",
+            "requested_result_limit": 20,
+            "result_end_reached": True,
+            "run_id": "run-review",
+            "source_id": "1",
+            "source_type": "EXCEL",
+            "target_store_id": "S1",
+            "target_store_name": "육수당 선릉점",
+            "task_key": build_task_key(search_task),
+        },
+    }
+
+
+def test_retry_history_redacts_secrets_in_log_and_export(tmp_path: Path):
+    search_task = task()
+    secret = "database-password"
+    session = FakeSession([browser_error(QueryMismatch, f"temporary {secret}"), success_page()])
+    retry_messages = []
+    instance, _, _ = collector(
+        tmp_path,
+        [session],
+        review_export=True,
+        redact=lambda value: value.replace(secret, "[REDACTED]"),
+        retry_logger=retry_messages.append,
+    )
+
+    instance.run([search_task], "rr")
+
+    export_path = (
+        artifact_root(tmp_path)
+        / "rr"
+        / build_task_key(search_task)
+        / "snapshot-results.json"
+    )
+    rendered = export_path.read_text(encoding="utf-8")
+    assert secret not in rendered
+    assert secret not in " ".join(retry_messages)
+    assert "[REDACTED]" in rendered
+    assert json.loads(rendered)["retry_history"] == [
+        {
+            "attempt": 1,
+            "message": "temporary [REDACTED]",
+            "status": "QUERY_MISMATCH",
+        }
+    ]
+
+
+def test_task_local_repository_failure_continues_to_next_task(tmp_path: Path):
+    class LocalThenSuccessfulRepository(FakeRepository):
+        def save(self, snapshot, results):
+            if not self.saved:
+                self.saved.append((snapshot, tuple(results)))
+                raise TaskPersistenceError("bad card data")
+            return super().save(snapshot, results)
+
+    repository = LocalThenSuccessfulRepository()
+    session = FakeSession([success_page(), success_page()])
+    instance, _, _ = collector(tmp_path, [session], repository=repository)
+
+    summary = instance.run([task(1), task(2, query="강남역 국밥")], "run-local-save")
+
+    assert summary.processed_tasks == 2
+    assert summary.persistence_failures == 1
+    assert session.search_calls == 2
+
+
+def test_fatal_repository_failure_aborts_before_next_search_and_closes_browser(tmp_path: Path):
+    class FatalRepository:
+        def save(self, snapshot, results):
+            raise FatalRepositoryError("connection lost")
+
+    session = FakeSession([success_page(), success_page()])
+    instance, _, _ = collector(tmp_path, [session], repository=FatalRepository())
+
+    with pytest.raises(FatalRepositoryError, match="connection lost"):
+        instance.run([task(1), task(2, query="강남역 국밥")], "run-fatal-save")
+
+    assert session.search_calls == 1
+    assert session.driver.quit_calls == 1

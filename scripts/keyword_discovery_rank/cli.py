@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import replace
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TextIO
 from uuid import UUID, uuid4
@@ -16,7 +16,7 @@ from .config import CollectorConfig, ConfigError
 from .matching import OwnStore, OwnStoreMatcher
 from .models import CollectStatus, DeviceType, SearchTask
 from .parser import DomResultParser
-from .repository import RepositoryError, SnapshotRepository
+from .repository import FatalRepositoryError, RepositoryError, SnapshotRepository
 from .task_source import (
     DatabaseTaskSource,
     ExcelTaskSource,
@@ -31,6 +31,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class CliError(ValueError):
     """A safe, user-actionable command-line failure."""
+
+
+@dataclass(frozen=True)
+class LoadedInput:
+    tasks: tuple[SearchTask, ...]
+    own_stores: tuple[OwnStore, ...]
+    manual_place_id_mappings: Mapping[str, str]
 
 
 class RollbackConnection:
@@ -54,9 +61,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Excel input file, or an explicit SQL query file for --source database",
     )
-    parser.add_argument("--source", choices=("excel", "database"), default="excel")
+    parser.add_argument(
+        "--source",
+        choices=("excel", "database"),
+        default="excel",
+        help="input adapter (database is reserved and disabled in this release)",
+    )
     parser.add_argument("--device-override", type=_device_type)
-    parser.add_argument("--limit", type=_positive_int)
+    parser.add_argument("--limit", type=_result_limit)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback-test", action="store_true")
     return parser.parse_args(argv)
@@ -79,21 +91,17 @@ def main(
         args = parse_args(argv)
         repo_root = Path(repo_root)
 
+        if args.source == "database":
+            raise CliError("database source is disabled in this release; use --source excel")
+
+        loaded_input = _load_input(args)
+        tasks = _prepare_tasks(loaded_input.tasks, args.device_override)
+        _require_tasks(tasks)
+
         if args.dry_run:
-            if args.source == "database":
-                raise CliError("database source cannot be validated in dry-run mode without a DB client")
-            tasks = _prepare_tasks(_load_tasks(args), args.device_override)
-            _require_tasks(tasks)
             run_id = str(uuid_factory())
             stdout.write(f"run_id={run_id} total={len(tasks)} dry_run=true\n")
             return 0
-
-        if args.source == "excel":
-            tasks = _prepare_tasks(_load_tasks(args), args.device_override)
-            _require_tasks(tasks)
-        else:
-            _require_input_file(args.input, "SQL query file")
-            tasks = None
 
         collector_config = CollectorConfig.from_env(repo_root)
         if args.limit is not None:
@@ -102,12 +110,7 @@ def main(
         connection = _connect_database(collector_config)
         repository_connection = RollbackConnection(connection) if args.rollback_test else connection
         repository = SnapshotRepository(repository_connection)
-        if repository.ping() is not True:
-            raise CliError("database preflight did not return a successful probe")
-
-        if tasks is None:
-            tasks = _prepare_tasks(_load_tasks(args, connection=connection), args.device_override)
-            _require_tasks(tasks)
+        repository.preflight(expected_database="naverDB")
 
         browser_factory = _make_browser_factory(collector_config)
         preflight_session = browser_factory.create(
@@ -117,7 +120,11 @@ def main(
         )
         _close_browser_session(preflight_session)
 
-        matcher = OwnStoreMatcher(_own_stores(tasks))
+        matcher = OwnStoreMatcher(
+            loaded_input.own_stores,
+            manual_place_id_mappings=loaded_input.manual_place_id_mappings,
+        )
+        redact = _make_redactor((collector_config.db_password,))
         collector = KeywordDiscoveryCollector(
             browser_factory,
             DomResultParser(),
@@ -128,8 +135,13 @@ def main(
             result_limit=collector_config.result_limit,
             max_retries=collector_config.max_retries,
             failure_limit=collector_config.failure_limit,
+            review_export=args.rollback_test,
+            redact=redact,
+            retry_logger=_make_retry_logger(stderr),
         )
         run_id = str(uuid_factory())
+        stdout.write(f"run_id={run_id}\n")
+        stdout.flush()
         summary = collector.run(tasks, run_id)
         _print_summary(summary, stdout)
         return 1 if summary.aborted or summary.persistence_failures else 0
@@ -180,6 +192,22 @@ def load_tasks(args: argparse.Namespace, *, connection: Any | None = None) -> li
 _load_tasks = load_tasks
 
 
+def load_input(args: argparse.Namespace) -> LoadedInput:
+    if args.source != "excel":
+        raise CliError("database source is disabled in this release; use --source excel")
+    _require_input_file(args.input, "Excel input file")
+    try:
+        loaded = ExcelTaskSource(args.input).load_bundle()
+    except InputValidationError:
+        raise
+    except Exception as exc:
+        raise CliError("Excel input could not be loaded") from exc
+    return LoadedInput(loaded.tasks, loaded.own_stores, loaded.manual_place_id_mappings)
+
+
+_load_input = load_input
+
+
 def _prepare_tasks(
     tasks: Iterable[SearchTask],
     device_override: DeviceType | None,
@@ -218,7 +246,7 @@ def _connect_database(config: CollectorConfig) -> Any:
             use_datetime2=True,
         )
     except Exception as exc:
-        raise RepositoryError("database connection failed") from exc
+        raise FatalRepositoryError("database connection failed") from exc
 
 
 def _make_browser_factory(config: CollectorConfig) -> BrowserFactory:
@@ -229,11 +257,24 @@ def _make_browser_factory(config: CollectorConfig) -> BrowserFactory:
     )
 
 
-def _own_stores(tasks: Iterable[SearchTask]) -> tuple[OwnStore, ...]:
-    stores: dict[str, OwnStore] = {}
-    for task in tasks:
-        stores.setdefault(task.target_store_id, OwnStore(task.target_store_id, task.target_store_name))
-    return tuple(stores.values())
+def _make_redactor(secret_values: Iterable[str]) -> Callable[[str], str]:
+    secrets = tuple(sorted({value for value in secret_values if value}, key=len, reverse=True))
+
+    def redact(value: str) -> str:
+        rendered = value
+        for secret in secrets:
+            rendered = rendered.replace(secret, "[REDACTED]")
+        return rendered
+
+    return redact
+
+
+def _make_retry_logger(stderr: TextIO) -> Callable[[str], None]:
+    def log(message: str) -> None:
+        stderr.write(message + "\n")
+        stderr.flush()
+
+    return log
 
 
 def _close_browser_session(session: Any) -> None:
@@ -285,11 +326,11 @@ def _device_type(value: str) -> DeviceType:
         raise argparse.ArgumentTypeError("device override must be MOBILE or PC") from exc
 
 
-def _positive_int(value: str) -> int:
+def _result_limit(value: str) -> int:
     try:
         parsed = int(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("limit must be a positive integer") from exc
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("limit must be a positive integer")
+        raise argparse.ArgumentTypeError("limit must be an integer between 1 and 20") from exc
+    if not 1 <= parsed <= 20:
+        raise argparse.ArgumentTypeError("limit must be between 1 and 20")
     return parsed

@@ -281,6 +281,25 @@ def test_save_converts_duplicate_run_task_key_to_repository_error_and_rolls_back
     assert ("commit",) not in connection.events
 
 
+def test_result_unique_violation_is_not_misreported_as_snapshot_duplicate():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    class DuplicateResultCursor(FakeCursor):
+        def executemany(self, sql, rows):
+            raise FakeDuplicateKeyError(2627, "duplicate result rank")
+
+    class DuplicateResultConnection(FakeConnection):
+        def cursor(self):
+            self.events.append(("cursor",))
+            return DuplicateResultCursor(self)
+
+    with pytest.raises(module.TaskPersistenceError) as caught:
+        module.SnapshotRepository(DuplicateResultConnection()).save(_snapshot(), _results())
+
+    assert "run_id and task_key" not in str(caught.value)
+    assert "task-local" in str(caught.value)
+
+
 def test_ping_executes_connection_probe_and_close_releases_connection():
     SnapshotRepository, _ = _repository_api()
     connection = FakeConnection()
@@ -293,3 +312,151 @@ def test_ping_executes_connection_probe_and_close_releases_connection():
     assert connection.events.count(("cursor_close",)) == 1
     assert connection.closed is True
     assert connection.events[-1] == ("connection_close",)
+
+
+class FakePreflightCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.rows = []
+
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.lower().split())
+        self.connection.statements.append(normalized)
+        if normalized == "select db_name()":
+            self.rows = [(self.connection.database,)]
+        elif "information_schema.columns" in normalized:
+            self.rows = list(self.connection.columns)
+        else:
+            raise AssertionError(f"unexpected preflight SQL: {normalized}")
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
+    def close(self):
+        pass
+
+
+class FakePreflightConnection:
+    def __init__(self, database, columns):
+        self.database = database
+        self.columns = columns
+        self.statements = []
+
+    def cursor(self):
+        return FakePreflightCursor(self)
+
+
+def test_preflight_validates_target_and_exact_column_signatures_with_selects_only():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+    columns = [
+        (table, column, data_type, max_length, precision, scale, nullable, is_identity)
+        for (table, column), (data_type, max_length, precision, scale, nullable, is_identity) in
+        module.EXPECTED_SCHEMA_COLUMNS.items()
+    ]
+    connection = FakePreflightConnection("naverDB", columns)
+
+    module.SnapshotRepository(connection).preflight(expected_database="naverDB")
+
+    assert len(module.EXPECTED_SCHEMA_COLUMNS) == 33
+    assert module.EXPECTED_SCHEMA_COLUMNS[("naver_keyword_discovery_snapshot", "run_id")][0] == (
+        "uniqueidentifier"
+    )
+    assert module.EXPECTED_SCHEMA_COLUMNS[("naver_keyword_discovery_result", "place_id")][:2] == (
+        "varchar",
+        50,
+    )
+    assert module.EXPECTED_SCHEMA_COLUMNS[("naver_keyword_discovery_snapshot", "snapshot_id")][-1] == 1
+    assert all(statement.startswith("select") for statement in connection.statements)
+
+
+@pytest.mark.parametrize(
+    ("database", "drop_last_column", "message"),
+    [
+        ("SEIERP_HD", False, "expected naverDB"),
+        ("naverDB", True, "schema mismatch"),
+    ],
+)
+def test_preflight_rejects_wrong_target_or_incomplete_schema(
+    database: str,
+    drop_last_column: bool,
+    message: str,
+):
+    module = import_module("scripts.keyword_discovery_rank.repository")
+    columns = [
+        (table, column, data_type, max_length, precision, scale, nullable, is_identity)
+        for (table, column), (data_type, max_length, precision, scale, nullable, is_identity) in
+        module.EXPECTED_SCHEMA_COLUMNS.items()
+    ]
+    if drop_last_column:
+        columns.pop()
+
+    with pytest.raises(module.FatalRepositoryError, match=message):
+        module.SnapshotRepository(FakePreflightConnection(database, columns)).preflight(
+            expected_database="naverDB"
+        )
+
+
+class FakeSqlError(Exception):
+    pass
+
+
+class FailingSaveCursor(FakeCursor):
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.lower().split())
+        if normalized.startswith("insert into dbo.naver_keyword_discovery_snapshot"):
+            raise self.connection.save_error
+        return super().execute(sql, params)
+
+
+class FailingSaveConnection(FakeConnection):
+    def __init__(self, save_error):
+        super().__init__()
+        self.save_error = save_error
+
+    def cursor(self):
+        self.events.append(("cursor",))
+        return FailingSaveCursor(self)
+
+
+@pytest.mark.parametrize("error", [FakeSqlError(208, "invalid object"), FakeSqlError(20003, "connection lost")])
+def test_save_classifies_target_schema_and_connection_failures_as_fatal(error):
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    with pytest.raises(module.FatalRepositoryError):
+        module.SnapshotRepository(FailingSaveConnection(error)).save(_snapshot(), ())
+
+
+def test_save_classifies_task_data_failure_as_local():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    with pytest.raises(module.TaskPersistenceError):
+        module.SnapshotRepository(
+            FailingSaveConnection(FakeSqlError(2628, "string or binary data would be truncated"))
+        ).save(_snapshot(), ())
+
+
+def test_preflight_classifies_cursor_connection_failure_as_fatal():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    class BrokenConnection:
+        def cursor(self):
+            raise FakeSqlError(20003, "connection unavailable")
+
+    with pytest.raises(module.FatalRepositoryError, match="preflight"):
+        module.SnapshotRepository(BrokenConnection()).preflight(expected_database="naverDB")
+
+
+def test_save_preserves_fatal_classification_when_rollback_also_fails():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    class BrokenRollbackConnection(FailingSaveConnection):
+        def rollback(self):
+            raise FakeSqlError(20003, "rollback connection unavailable")
+
+    with pytest.raises(module.FatalRepositoryError):
+        module.SnapshotRepository(
+            BrokenRollbackConnection(FakeSqlError(208, "invalid object"))
+        ).save(_snapshot(), ())

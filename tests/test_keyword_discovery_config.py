@@ -21,7 +21,6 @@ def write_env(repo_root: Path, **overrides: str) -> Path:
         "DB_USER": "generic-readonly",
         "DB_PASSWORD": "generic-secret",
         "DB_ENCRYPT": "true",
-        "DB_TRUST_SERVER_CERTIFICATE": "false",
         "KEYWORD_DISCOVERY_DB_DATABASE": "naverDB",
         "KEYWORD_DISCOVERY_DB_USER": "collector-writer",
         "KEYWORD_DISCOVERY_DB_PASSWORD": "dedicated-secret",
@@ -61,7 +60,6 @@ def test_config_reads_db_and_collector_settings(tmp_path: Path):
             tmp_path,
             DB_PORT="1444",
             DB_ENCRYPT="false",
-            DB_TRUST_SERVER_CERTIFICATE="true",
             KEYWORD_DISCOVERY_HEADLESS="false",
             KEYWORD_DISCOVERY_TIMEOUT_SECONDS="45",
             KEYWORD_DISCOVERY_ARTIFACT_ROOT="saved/evidence",
@@ -75,7 +73,7 @@ def test_config_reads_db_and_collector_settings(tmp_path: Path):
         "collector-writer",
         "dedicated-secret",
     )
-    assert (config.db_encrypt, config.db_trust_server_certificate, config.headless) == (False, True, False)
+    assert (config.db_encrypt, config.headless) == (False, False)
     assert config.timeout_seconds == 45
     assert config.artifact_root == tmp_path / "saved" / "evidence"
 
@@ -137,3 +135,23 @@ def test_env_example_documents_separate_generic_and_collector_database_credentia
     assert "KEYWORD_DISCOVERY_DB_DATABASE=naverDB\n" in example
     assert "KEYWORD_DISCOVERY_DB_USER=\n" in example
     assert "KEYWORD_DISCOVERY_DB_PASSWORD=\n" in example
+    assert "DB_TRUST_SERVER_CERTIFICATE" not in example
+
+
+@pytest.mark.parametrize("result_limit", [0, 21])
+def test_config_rejects_result_limit_outside_naver_card_boundary(tmp_path: Path, result_limit: int):
+    valid = CollectorConfig.from_env(write_env(tmp_path))
+
+    with pytest.raises(ConfigError, match="between 1 and 20"):
+        valid.__class__(
+            db_server=valid.db_server,
+            db_port=valid.db_port,
+            db_database=valid.db_database,
+            db_user=valid.db_user,
+            db_password=valid.db_password,
+            db_encrypt=valid.db_encrypt,
+            headless=valid.headless,
+            timeout_seconds=valid.timeout_seconds,
+            artifact_root=valid.artifact_root,
+            result_limit=result_limit,
+        )
