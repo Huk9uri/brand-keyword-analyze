@@ -81,6 +81,8 @@ def detect_page_state(url: str, html: str, requested_query: str) -> str:
         return "QUERY_MISMATCH"
 
     soup = BeautifulSoup(html or "", "html.parser")
+    for non_visible in soup.select("script, style, template, noscript"):
+        non_visible.decompose()
     visible_text = " ".join(soup.stripped_strings)
     if any(marker in visible_text for marker in ERROR_TEXTS):
         return "ERROR"

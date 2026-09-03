@@ -65,6 +65,21 @@ def test_detect_page_state_identifies_terminal_dom(fixture_name: str, expected: 
     assert detect_page_state(url, fixture(fixture_name), QUERY) == expected
 
 
+def test_detect_page_state_ignores_error_text_in_non_visible_elements():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = """
+    <html><body>
+      <li data-naver-place-card data-place-id="1001">육수당 선릉점</li>
+      <script>일시적인 오류</script>
+      <style>오류가 발생했습니다</style>
+      <template>서비스 접속이 원활하지 않습니다</template>
+      <noscript>잠시 후 다시 시도</noscript>
+    </body></html>
+    """
+
+    assert detect_page_state(url, html, QUERY) == "RESULTS"
+
+
 def test_detect_page_state_leaves_unfinished_loading_undecided():
     url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
 
