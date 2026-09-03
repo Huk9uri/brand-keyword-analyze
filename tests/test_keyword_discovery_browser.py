@@ -82,6 +82,20 @@ def test_detect_page_state_ignores_error_text_in_non_visible_elements():
     assert detect_page_state(url, html, QUERY) == "RESULTS"
 
 
+def test_detect_page_state_ignores_error_text_in_hidden_dom_blocks():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = """
+    <html><body>
+      <div style="display: none">일시적인 오류로 정보를 표시할 수 없습니다.</div>
+      <div hidden>오류가 발생했습니다</div>
+      <div aria-hidden="true">서비스 접속이 원활하지 않습니다</div>
+      <li data-nmb_res-doc-id="13149768">농민백암순대 본점</li>
+    </body></html>
+    """
+
+    assert detect_page_state(url, html, QUERY) == "RESULTS"
+
+
 def test_detect_page_state_leaves_unfinished_loading_undecided():
     url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
 

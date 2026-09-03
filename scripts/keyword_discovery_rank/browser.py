@@ -91,6 +91,15 @@ def detect_page_state(url: str, html: str, requested_query: str) -> str:
     soup = BeautifulSoup(html or "", "html.parser")
     for non_visible in soup.select("script, style, template, noscript"):
         non_visible.decompose()
+    for non_visible in list(soup.find_all(True)):
+        style = "".join(str(non_visible.get("style", "")).lower().split())
+        if (
+            non_visible.has_attr("hidden")
+            or str(non_visible.get("aria-hidden", "")).lower() == "true"
+            or "display:none" in style
+            or "visibility:hidden" in style
+        ):
+            non_visible.decompose()
     visible_text = " ".join(soup.stripped_strings)
     if any(marker in visible_text for marker in ERROR_TEXTS):
         return "ERROR"
