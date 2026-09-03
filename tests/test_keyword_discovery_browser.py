@@ -196,11 +196,17 @@ def test_factory_sets_viewport_and_geolocation(device_type: DeviceType, viewport
 
     assert isinstance(session, BrowserSession)
     assert driver.window_sizes == [viewport]
+    search_origin = (
+        "https://m.search.naver.com"
+        if device_type is DeviceType.MOBILE
+        else "https://search.naver.com"
+    )
     assert driver.cdp_calls == [
         (
             "Emulation.setGeolocationOverride",
             {"latitude": 37.5048, "longitude": 127.0489, "accuracy": 100},
-        )
+        ),
+        ("Browser.grantPermissions", {"origin": search_origin, "permissions": ["geolocation"]}),
     ]
     mobile_arguments = [arg for arg in captured_options[0].arguments if arg.startswith("--user-agent=")]
     assert bool(mobile_arguments) is (device_type is DeviceType.MOBILE)
@@ -264,6 +270,45 @@ def test_search_builds_encoded_mobile_url_and_returns_results_at_limit():
     assert page.final_url == final_url
     assert page.html == result_html(20)
     assert (page.state, page.observed_result_count, page.result_end_reached) == ("RESULTS", 20, False)
+
+
+def test_search_activates_current_location_before_accepting_results():
+    url = "https://m.search.naver.com/search.naver?query=%EA%B5%AD%EB%B0%A5"
+    before = '<span>위치 정보 없음</span><a id="_my_location">내위치</a>'
+    after = result_html(5)
+
+    class LocationDriver(FakeDriver):
+        def __init__(self):
+            super().__init__([(url, before), (url, after)])
+            self.location_clicks = 0
+
+        def find_elements(self, by: str, value: str):
+            self.find_element_calls.append((by, value))
+            if by == By.ID and value == "_my_location" and self.page_index == 0:
+                driver = self
+
+                class LocationButton:
+                    def is_displayed(self):
+                        return True
+
+                    def is_enabled(self):
+                        return True
+
+                    def click(self):
+                        driver.location_clicks += 1
+                        driver.page_index = 1
+
+                return [LocationButton()]
+            return []
+
+    driver = LocationDriver()
+    page = make_session(driver, result_limit=5).search(
+        SearchTask("location", "국밥", "S1", "매장", "위치", 37.5, 127.0, SourceType.EXCEL, "1")
+    )
+
+    assert driver.location_clicks == 1
+    assert "위치 정보 없음" not in page.html
+    assert page.observed_result_count == 5
 
 
 def test_search_deadline_covers_navigation_even_if_driver_returns_late():

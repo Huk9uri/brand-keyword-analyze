@@ -41,6 +41,7 @@ ERROR_TEXTS = (
     "잠시 후 다시 시도",
 )
 RESULT_END_TEXTS = ("검색 결과의 끝", "더 이상 검색 결과가 없습니다")
+LOCATION_UNAVAILABLE_TEXT = "위치 정보 없음"
 
 
 class BrowserError(RuntimeError):
@@ -107,6 +108,8 @@ def detect_page_state(url: str, html: str, requested_query: str) -> str:
         return "ERROR"
     if any(marker in visible_text for marker in NO_RESULT_TEXTS):
         return "NO_RESULT"
+    if LOCATION_UNAVAILABLE_TEXT in visible_text:
+        return "LOCATION_PENDING"
     if semantic_place_cards(soup) or soup.select_one(RESULT_CARD_SELECTOR) is not None or soup.select_one(DIRECT_PLACE_SELECTOR) is not None:
         return "RESULTS"
     return "LOADING"
@@ -155,6 +158,8 @@ class BrowserSession:
                 last_url=self._last_url,
                 html=self._last_html,
             )
+
+        self._activate_current_location_if_needed()
 
         last_state = "LOADING"
         more_control_clicked = False
@@ -259,6 +264,15 @@ class BrowserSession:
                 return True
         return False
 
+    def _activate_current_location_if_needed(self) -> None:
+        if LOCATION_UNAVAILABLE_TEXT not in self._last_html:
+            return
+        for element in self.driver.find_elements(By.ID, "_my_location"):
+            if element.is_displayed() and element.is_enabled():
+                element.click()
+                self._sleep(self.poll_interval)
+                return
+
     def _capture_best_effort(self) -> None:
         self._capture_url_best_effort()
         try:
@@ -319,6 +333,15 @@ class BrowserFactory:
             driver.execute_cdp_cmd(
                 "Emulation.setGeolocationOverride",
                 {"latitude": latitude, "longitude": longitude, "accuracy": 100},
+            )
+            search_origin = (
+                "https://m.search.naver.com"
+                if device_type is DeviceType.MOBILE
+                else "https://search.naver.com"
+            )
+            driver.execute_cdp_cmd(
+                "Browser.grantPermissions",
+                {"origin": search_origin, "permissions": ["geolocation"]},
             )
         except Exception as exc:
             raise BrowserSessionError(
