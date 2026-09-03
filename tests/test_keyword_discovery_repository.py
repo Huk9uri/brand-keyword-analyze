@@ -460,3 +460,18 @@ def test_save_preserves_fatal_classification_when_rollback_also_fails():
         module.SnapshotRepository(
             BrokenRollbackConnection(FakeSqlError(208, "invalid object"))
         ).save(_snapshot(), ())
+
+
+def test_save_classifies_failed_rollback_after_task_local_error_as_fatal():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    class BrokenRollbackConnection(FailingSaveConnection):
+        def rollback(self):
+            raise FakeSqlError(20003, "rollback connection unavailable")
+
+    with pytest.raises(module.FatalRepositoryError, match="rollback"):
+        module.SnapshotRepository(
+            BrokenRollbackConnection(
+                FakeSqlError(2628, "string or binary data would be truncated")
+            )
+        ).save(_snapshot(), ())

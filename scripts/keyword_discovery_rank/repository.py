@@ -174,8 +174,11 @@ class SnapshotRepository:
         except Exception as exc:
             try:
                 self._connection.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                raise FatalRepositoryError(
+                    "failed to rollback keyword discovery snapshot transaction; "
+                    "transaction state is uncertain"
+                ) from rollback_exc
             if isinstance(exc, RepositoryError):
                 raise
             if operation == "snapshot" and _is_duplicate_key_error(exc):
