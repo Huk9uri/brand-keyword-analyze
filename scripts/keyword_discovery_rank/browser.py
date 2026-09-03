@@ -26,6 +26,7 @@ RESULT_CARD_SELECTOR = (
     "li[data-nmb_res-doc-id], li[data-nmb_rese-doc-id], "
     "[data-naver-place-card], li.place-result-card, li.VLTHu"
 )
+DIRECT_PLACE_SELECTOR = "[data-laim-exp-id^='nmb_lpa']"
 RESULT_END_SELECTOR = "[data-naver-search-end]"
 MORE_RESULTS_XPATH = (
     "//*[@role='button' and "
@@ -105,7 +106,10 @@ def detect_page_state(url: str, html: str, requested_query: str) -> str:
         return "ERROR"
     if any(marker in visible_text for marker in NO_RESULT_TEXTS):
         return "NO_RESULT"
-    if soup.select_one(RESULT_CARD_SELECTOR) is not None:
+    if (
+        soup.select_one(RESULT_CARD_SELECTOR) is not None
+        or soup.select_one(DIRECT_PLACE_SELECTOR) is not None
+    ):
         return "RESULTS"
     return "LOADING"
 
@@ -329,6 +333,9 @@ def _build_search_url(task: SearchTask) -> str:
 def _result_progress(html: str) -> tuple[int, bool]:
     soup = BeautifulSoup(html or "", "html.parser")
     count = len(soup.select(RESULT_CARD_SELECTOR))
+    direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
+    if count == 0 and direct_place is not None:
+        return 1, True
     text = " ".join(soup.stripped_strings)
     end_reached = soup.select_one(RESULT_END_SELECTOR) is not None or any(
         marker in text for marker in RESULT_END_TEXTS

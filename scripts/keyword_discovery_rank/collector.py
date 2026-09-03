@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from .browser import (
     BrowserSessionError,
+    DIRECT_PLACE_SELECTOR,
     NO_RESULT_TEXTS,
     QueryMismatch,
     RESULT_CARD_SELECTOR,
@@ -460,6 +461,9 @@ def _browser_failure_status(error: Exception) -> CollectStatus:
 def _result_progress(html: str) -> tuple[int, bool]:
     soup = BeautifulSoup(html or "", "html.parser")
     observed_count = len(soup.select(RESULT_CARD_SELECTOR))
+    direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
+    if observed_count == 0 and direct_place is not None:
+        return 1, True
     visible_text = " ".join(soup.stripped_strings)
     result_end_reached = soup.select_one(RESULT_END_SELECTOR) is not None or any(
         marker in visible_text for marker in RESULT_END_TEXTS

@@ -96,6 +96,14 @@ def test_detect_page_state_ignores_error_text_in_hidden_dom_blocks():
     assert detect_page_state(url, html, QUERY) == "RESULTS"
 
 
+def test_detect_page_state_accepts_direct_place_result_as_complete_results():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89+%EC%9C%A1%EC%88%98%EB%8B%B9"
+    html = fixture("direct_place_result.html")
+
+    assert detect_page_state(url, html, "선릉 육수당") == "RESULTS"
+    assert _result_progress(html) == (1, True)
+
+
 def test_detect_page_state_leaves_unfinished_loading_undecided():
     url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
 

@@ -8,18 +8,22 @@ from bs4 import BeautifulSoup, Tag
 from .models import ParsedResult, ParsedSearch, SearchPage
 
 
-PARSER_VERSION = "dom-v2"
+PARSER_VERSION = "dom-v3"
 
 RESULT_CARD_SELECTOR = (
     "li[data-nmb_res-doc-id], li[data-nmb_rese-doc-id], "
     "[data-naver-place-card], li.place-result-card, li.VLTHu"
 )
+DIRECT_PLACE_SELECTOR = "[data-laim-exp-id^='nmb_lpa']"
 DETAIL_LINK_SELECTOR = (
     ".SgjqM a[href], a[data-place-name], a[data-place-detail], "
     "a[href*='place.naver.com'], a[href*='ader.naver.com']"
 )
-NAME_SELECTOR = "[data-place-name], .place-name, .YwYLL, .TYaxT"
-CATEGORY_SELECTOR = "[data-place-category], .place-category, .category, .YzBgS, .KCMnt"
+NAME_SELECTOR = "[data-place-name], .place-name, .YwYLL, .TYaxT, .IY7ZX"
+CATEGORY_SELECTOR = (
+    "[data-place-category], .place-category, .category, .YzBgS, .KCMnt, "
+    ".HzOD8 > a.dtDQt"
+)
 DISTANCE_SELECTOR = "[data-place-distance], .place-distance, .distance"
 AD_MARKER_SELECTOR = "[data-place-ad], .place-ad, .ad-badge"
 
@@ -33,6 +37,9 @@ class DomResultParser:
     def parse(self, page: SearchPage) -> ParsedSearch:
         soup = BeautifulSoup(page.html or "", "html.parser")
         cards = soup.select(RESULT_CARD_SELECTOR)
+        if not cards:
+            direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
+            cards = [direct_place] if direct_place is not None else []
         results: list[ParsedResult] = []
         next_organic_rank = 1
 

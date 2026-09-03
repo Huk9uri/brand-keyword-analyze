@@ -22,7 +22,7 @@ def test_parser_extracts_mixed_organic_and_ad_cards_in_screen_order():
 
     parsed = DomResultParser().parse(page)
 
-    assert PARSER_VERSION == "dom-v2"
+    assert PARSER_VERSION == "dom-v3"
     assert [row.raw_position for row in parsed.results] == [1, 2, 3, 4]
     assert [row.organic_rank for row in parsed.results] == [1, None, 2, 3]
     assert [row.place_id for row in parsed.results] == ["1001", "9001", "1002", "1003"]
@@ -98,7 +98,7 @@ def test_parser_extracts_supplied_live_mobile_ad_and_organic_cards():
 
     parsed = DomResultParser().parse(page)
 
-    assert PARSER_VERSION == "dom-v2"
+    assert PARSER_VERSION == "dom-v3"
     assert [row.raw_position for row in parsed.results] == [1, 2]
     assert [row.organic_rank for row in parsed.results] == [None, 1]
     assert [row.place_id for row in parsed.results] == ["2089542025", "13149768"]
@@ -110,3 +110,25 @@ def test_parser_extracts_supplied_live_mobile_ad_and_organic_cards():
         "https://m.place.naver.com/restaurant/13149768",
     ]
     assert all("ader.naver.com" not in row.detail_url for row in parsed.results)
+
+
+def test_parser_extracts_direct_place_result_as_organic_rank_one():
+    page = SearchPage(
+        "https://m.search.naver.com/search.naver?query=test",
+        fixture("direct_place_result.html"),
+        "RESULTS",
+        1,
+        True,
+    )
+
+    parsed = DomResultParser().parse(page)
+
+    assert len(parsed.results) == 1
+    result = parsed.results[0]
+    assert result.raw_position == 1
+    assert result.organic_rank == 1
+    assert result.place_id == "1029886575"
+    assert result.place_name == "팔도국밥 육수당 선릉역점"
+    assert result.category == "국밥"
+    assert result.is_ad is False
+    assert result.detail_url == "https://m.place.naver.com/restaurant/1029886575"
