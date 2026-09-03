@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 
 from .models import DeviceType, SearchPage, SearchTask
 
@@ -21,8 +22,15 @@ MOBILE_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 )
 
-RESULT_CARD_SELECTOR = "[data-naver-place-card], li.place-result-card, li.VLTHu"
+RESULT_CARD_SELECTOR = (
+    "li[data-nmb_res-doc-id], li[data-nmb_rese-doc-id], "
+    "[data-naver-place-card], li.place-result-card, li.VLTHu"
+)
 RESULT_END_SELECTOR = "[data-naver-search-end]"
+MORE_RESULTS_XPATH = (
+    "//*[@role='button' and "
+    "contains(normalize-space(.), '펼쳐서 더보기')]"
+)
 NO_RESULT_TEXTS = ("검색결과가 없습니다", "검색 결과가 없습니다")
 ERROR_TEXTS = (
     "일시적인 오류",
@@ -138,6 +146,7 @@ class BrowserSession:
             )
 
         last_state = "LOADING"
+        more_control_clicked = False
         while True:
             self._capture()
             last_state = detect_page_state(self._last_url, self._last_html, task.query)
@@ -171,6 +180,8 @@ class BrowserSession:
 
             if last_state == "RESULTS":
                 try:
+                    if not more_control_clicked:
+                        more_control_clicked = self._click_more_results_if_available()
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 except Exception as exc:
                     raise self._session_error("failed while expanding search results", exc) from exc
@@ -213,6 +224,13 @@ class BrowserSession:
             self._last_html = self.driver.page_source
         except Exception as exc:
             raise self._session_error("failed to inspect browser state", exc) from exc
+
+    def _click_more_results_if_available(self) -> bool:
+        for element in self.driver.find_elements(By.XPATH, MORE_RESULTS_XPATH):
+            if element.is_displayed() and element.is_enabled():
+                element.click()
+                return True
+        return False
 
     def _capture_best_effort(self) -> None:
         self._capture_url_best_effort()

@@ -8,16 +8,23 @@ from bs4 import BeautifulSoup, Tag
 from .models import ParsedResult, ParsedSearch, SearchPage
 
 
-PARSER_VERSION = "dom-v1"
+PARSER_VERSION = "dom-v2"
 
-RESULT_CARD_SELECTOR = "[data-naver-place-card], li.place-result-card, li.VLTHu"
-DETAIL_LINK_SELECTOR = "a[data-place-name], a[data-place-detail], a[href*='place.naver.com']"
+RESULT_CARD_SELECTOR = (
+    "li[data-nmb_res-doc-id], li[data-nmb_rese-doc-id], "
+    "[data-naver-place-card], li.place-result-card, li.VLTHu"
+)
+DETAIL_LINK_SELECTOR = (
+    ".SgjqM a[href], a[data-place-name], a[data-place-detail], "
+    "a[href*='place.naver.com'], a[href*='ader.naver.com']"
+)
 NAME_SELECTOR = "[data-place-name], .place-name, .YwYLL, .TYaxT"
-CATEGORY_SELECTOR = "[data-place-category], .place-category, .category, .YzBgS"
+CATEGORY_SELECTOR = "[data-place-category], .place-category, .category, .YzBgS, .KCMnt"
 DISTANCE_SELECTOR = "[data-place-distance], .place-distance, .distance"
 AD_MARKER_SELECTOR = "[data-place-ad], .place-ad, .ad-badge"
 
-_PATH_PLACE_ID = re.compile(r"/(?:restaurant|place|hospital|hairshop|nailshop)/([^/?#]+)")
+_PATH_PLACE_ID = re.compile(r"/(restaurant|place|hospital|hairshop|nailshop)/([^/?#]+)")
+_DOC_PLACE_ID = re.compile(r"^(\d+)")
 
 
 class DomResultParser:
@@ -36,8 +43,9 @@ class DomResultParser:
                 next_organic_rank += 1
 
             link = _detail_link(card)
-            detail_url = _attribute(link, "href")
-            place_id = _attribute(card, "data-place-id") or _place_id_from_url(detail_url)
+            raw_detail_url = _attribute(link, "href")
+            place_id = _place_id_from_card(card) or _place_id_from_url(raw_detail_url)
+            detail_url = _canonical_detail_url(raw_detail_url, place_id)
             results.append(
                 ParsedResult(
                     raw_position=raw_position,
@@ -60,7 +68,17 @@ class DomResultParser:
 
 def _is_ad(card: Tag) -> bool:
     attribute = _attribute(card, "data-is-ad").casefold()
-    return attribute in {"1", "true", "yes"} or card.select_one(AD_MARKER_SELECTOR) is not None
+    doc_id = _doc_id(card).casefold()
+    blind_labels = (
+        node.get_text(" ", strip=True).casefold()
+        for node in card.select(".place_blind")
+    )
+    return (
+        attribute in {"1", "true", "yes"}
+        or "_nad-" in doc_id
+        or any(label == "광고" for label in blind_labels)
+        or card.select_one(AD_MARKER_SELECTOR) is not None
+    )
 
 
 def _place_name(card: Tag, link: Tag | None) -> str:
@@ -99,12 +117,49 @@ def _place_id_from_url(detail_url: str) -> str:
     if not detail_url:
         return ""
     parsed = urlparse(detail_url)
+    if parsed.netloc.casefold() == "ader.naver.com":
+        destination = parse_qs(parsed.query).get("fu", ())
+        return _place_id_from_url(destination[0]) if destination else ""
     matched = _PATH_PLACE_ID.search(parsed.path)
     if matched:
-        return matched.group(1)
+        return matched.group(2)
     query = parse_qs(parsed.query)
     for key in ("placeId", "place_id", "id"):
         values = query.get(key)
         if values:
             return values[0]
+    return ""
+
+
+def _doc_id(card: Tag) -> str:
+    return _attribute(card, "data-nmb_res-doc-id") or _attribute(
+        card, "data-nmb_rese-doc-id"
+    )
+
+
+def _place_id_from_card(card: Tag) -> str:
+    explicit = _attribute(card, "data-place-id")
+    if explicit:
+        return explicit
+    matched = _DOC_PLACE_ID.match(_doc_id(card))
+    return matched.group(1) if matched else ""
+
+
+def _canonical_detail_url(detail_url: str, place_id: str) -> str:
+    candidate = detail_url
+    parsed = urlparse(candidate)
+    if parsed.netloc.casefold() == "ader.naver.com":
+        destination = parse_qs(parsed.query).get("fu", ())
+        candidate = destination[0] if destination else ""
+        parsed = urlparse(candidate)
+
+    matched = _PATH_PLACE_ID.search(parsed.path)
+    if (
+        parsed.scheme.casefold() == "https"
+        and parsed.netloc.casefold() in {"m.place.naver.com", "place.naver.com"}
+        and matched is not None
+    ):
+        return f"https://m.place.naver.com/{matched.group(1)}/{matched.group(2)}"
+    if place_id:
+        return f"https://m.place.naver.com/restaurant/{place_id}"
     return ""

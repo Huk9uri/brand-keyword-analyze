@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
 
 from scripts.keyword_discovery_rank.browser import (
     BrowserFactory,
@@ -13,6 +14,7 @@ from scripts.keyword_discovery_rank.browser import (
     QueryMismatch,
     SearchPageError,
     SearchStateTimeout,
+    _result_progress,
     detect_page_state,
     query_matches_url,
 )
@@ -102,6 +104,8 @@ class FakeDriver:
         self.cdp_calls: list[tuple[str, dict[str, float | int]]] = []
         self.script_calls: list[str] = []
         self.screenshot_paths: list[str] = []
+        self.find_element_calls: list[tuple[str, str]] = []
+        self.more_button = None
 
     @property
     def current_url(self) -> str:
@@ -133,6 +137,10 @@ class FakeDriver:
         self.script_calls.append(script)
         if self.page_index < len(self.pages) - 1:
             self.page_index += 1
+
+    def find_elements(self, by: str, value: str):
+        self.find_element_calls.append((by, value))
+        return [] if self.more_button is None else [self.more_button]
 
     def save_screenshot(self, path: str) -> bool:
         if self.fail_on == "screenshot":
@@ -286,6 +294,104 @@ def test_search_scrolls_until_result_limit_is_reached():
     assert len(driver.script_calls) == 2
     assert page.observed_result_count == 20
     assert not page.result_end_reached
+
+
+def test_live_mobile_cards_are_results_and_more_control_is_not_an_end_marker():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    html = fixture("live_mobile_mixed_results.html")
+
+    assert detect_page_state(url, html, QUERY) == "RESULTS"
+    assert _result_progress(html) == (2, False)
+
+
+def test_search_clicks_live_more_control_once_before_continuing_scroll_expansion():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    expandable = fixture("live_mobile_mixed_results.html")
+    driver = FakeDriver([(url, expandable), (url, result_html(20))])
+
+    class MoreButton:
+        def __init__(self):
+            self.clicks = 0
+
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def click(self):
+            self.clicks += 1
+
+    button = MoreButton()
+    driver.more_button = button
+
+    page = make_session(driver).search(make_task())
+
+    assert page.observed_result_count == 20
+    assert button.clicks == 1
+    assert driver.find_element_calls == [(By.XPATH, driver.find_element_calls[0][1])]
+    assert "role='button'" in driver.find_element_calls[0][1]
+    assert "펼쳐서 더보기" in driver.find_element_calls[0][1]
+    assert len(driver.script_calls) == 1
+
+
+def test_search_clicks_more_control_when_it_appears_after_initial_scroll():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+
+    class MoreButton:
+        def __init__(self):
+            self.clicks = 0
+
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def click(self):
+            self.clicks += 1
+
+    button = MoreButton()
+
+    class DelayedMoreDriver(FakeDriver):
+        def find_elements(self, by: str, value: str):
+            self.find_element_calls.append((by, value))
+            return [button] if self.page_index >= 1 else []
+
+    driver = DelayedMoreDriver(
+        [(url, result_html(5)), (url, result_html(12)), (url, result_html(20))]
+    )
+
+    page = make_session(driver).search(make_task())
+
+    assert page.observed_result_count == 20
+    assert button.clicks == 1
+    assert len(driver.find_element_calls) == 2
+
+
+def test_search_does_not_repeat_more_click_while_stuck_before_timeout():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    driver = FakeDriver([(url, fixture("live_mobile_mixed_results.html"))])
+
+    class MoreButton:
+        clicks = 0
+
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def click(self):
+            self.clicks += 1
+
+    button = MoreButton()
+    driver.more_button = button
+
+    with pytest.raises(SearchStateTimeout):
+        make_session(driver).search(make_task())
+
+    assert button.clicks == 1
 
 
 def test_search_accepts_short_results_only_with_confirmed_end_marker():
