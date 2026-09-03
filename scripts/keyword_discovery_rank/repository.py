@@ -4,6 +4,42 @@ from collections.abc import Sequence
 from typing import Any
 
 from .models import CollectStatus, ParsedResult, SearchSnapshot
+from .place_location import PlaceLocation
+
+
+LOCATION_SELECT_SQL = """
+SELECT place_id, latitude, longitude, resolved_at, verified_at, resolver_version
+FROM dbo.naver_place_location
+WHERE place_id = %s
+"""
+
+LOCATION_UPSERT_SQL = """
+MERGE dbo.naver_place_location AS target
+USING (SELECT %s AS place_id) AS source
+ON target.place_id = source.place_id
+WHEN MATCHED THEN UPDATE SET
+    latitude = %s, longitude = %s, verified_at = %s, resolver_version = %s
+WHEN NOT MATCHED THEN INSERT
+    (place_id, latitude, longitude, resolved_at, verified_at, resolver_version)
+VALUES (%s, %s, %s, %s, %s, %s);
+"""
+
+LOCATION_SCHEMA_COLUMNS_SQL = """
+SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+       NUMERIC_PRECISION, NUMERIC_SCALE, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'naver_place_location'
+ORDER BY COLUMN_NAME
+"""
+
+EXPECTED_LOCATION_SCHEMA_COLUMNS = {
+    "latitude": ("decimal", None, 10, 7, "NO"),
+    "longitude": ("decimal", None, 10, 7, "NO"),
+    "place_id": ("varchar", 50, None, None, "NO"),
+    "resolved_at": ("datetime2", None, None, None, "NO"),
+    "resolver_version": ("varchar", 30, None, None, "NO"),
+    "verified_at": ("datetime2", None, None, None, "NO"),
+}
 
 
 class RepositoryError(RuntimeError):
@@ -100,8 +136,8 @@ EXPECTED_SCHEMA_COLUMNS = {
     ("naver_keyword_discovery_snapshot", "target_store_id"): ("nvarchar", 100, None, None, "NO", 0),
     ("naver_keyword_discovery_snapshot", "target_store_name"): ("nvarchar", 200, None, None, "NO", 0),
     ("naver_keyword_discovery_snapshot", "location_name"): ("nvarchar", 200, None, None, "NO", 0),
-    ("naver_keyword_discovery_snapshot", "latitude"): ("decimal", None, 10, 7, "NO", 0),
-    ("naver_keyword_discovery_snapshot", "longitude"): ("decimal", None, 10, 7, "NO", 0),
+    ("naver_keyword_discovery_snapshot", "latitude"): ("decimal", None, 10, 7, "YES", 0),
+    ("naver_keyword_discovery_snapshot", "longitude"): ("decimal", None, 10, 7, "YES", 0),
     ("naver_keyword_discovery_snapshot", "device_type"): ("varchar", 10, None, None, "NO", 0),
     ("naver_keyword_discovery_snapshot", "source_type"): ("varchar", 20, None, None, "NO", 0),
     ("naver_keyword_discovery_snapshot", "source_id"): ("nvarchar", 100, None, None, "NO", 0),
@@ -246,6 +282,70 @@ class SnapshotRepository:
 
     def close(self) -> None:
         self._connection.close()
+
+
+class PlaceLocationRepository:
+    def __init__(self, connection: Any):
+        self._connection = connection
+
+    def get(self, place_id: str) -> PlaceLocation | None:
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute(LOCATION_SELECT_SQL, (place_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return PlaceLocation(str(row[0]), float(row[1]), float(row[2]), row[3], row[4], str(row[5]))
+        finally:
+            cursor.close()
+
+    def upsert(self, location: PlaceLocation) -> None:
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute(
+                LOCATION_UPSERT_SQL,
+                (
+                    location.place_id,
+                    location.latitude, location.longitude, location.verified_at, location.resolver_version,
+                    location.place_id, location.latitude, location.longitude,
+                    location.resolved_at, location.verified_at, location.resolver_version,
+                ),
+            )
+            self._connection.commit()
+        except Exception as exc:
+            try:
+                self._connection.rollback()
+            except Exception as rollback_exc:
+                raise FatalRepositoryError("failed to rollback Place location transaction") from rollback_exc
+            raise FatalRepositoryError("failed to save Place location") from exc
+        finally:
+            cursor.close()
+
+    def preflight(self, *, expected_database: str = "naverDB") -> None:
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute("SELECT DB_NAME()")
+            row = cursor.fetchone()
+            actual_database = str(row[0]) if row else ""
+            if actual_database.casefold() != expected_database.casefold():
+                raise FatalRepositoryError(
+                    f"database target mismatch: expected {expected_database}"
+                )
+            cursor.execute(LOCATION_SCHEMA_COLUMNS_SQL)
+            actual = {
+                str(row[0]): (
+                    str(row[1]).lower(), row[2], row[3], row[4], str(row[5]).upper()
+                )
+                for row in cursor.fetchall()
+            }
+            if actual != EXPECTED_LOCATION_SCHEMA_COLUMNS:
+                raise FatalRepositoryError("Place location schema mismatch")
+        except FatalRepositoryError:
+            raise
+        except Exception as exc:
+            raise FatalRepositoryError("Place location target/schema preflight failed") from exc
+        finally:
+            cursor.close()
 
 
 def _snapshot_values(snapshot: SearchSnapshot) -> tuple[object, ...]:

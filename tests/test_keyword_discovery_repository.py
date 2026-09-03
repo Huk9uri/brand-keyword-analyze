@@ -12,6 +12,7 @@ from scripts.keyword_discovery_rank.models import (
     SearchTask,
     SourceType,
 )
+from scripts.keyword_discovery_rank.place_location import PlaceLocation
 
 
 class FakeDuplicateKeyError(Exception):
@@ -484,3 +485,78 @@ def test_save_classifies_failed_rollback_after_task_local_error_as_fatal():
                 FakeSqlError(2628, "string or binary data would be truncated")
             )
         ).save(_snapshot(), ())
+
+
+def test_place_location_repository_reads_and_upserts_cache_rows():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    class Cursor:
+        def __init__(self):
+            self.row = None
+            self.executed = []
+
+        def execute(self, sql, params=None):
+            self.executed.append((" ".join(sql.lower().split()), params))
+            if sql.lstrip().lower().startswith("select place_id"):
+                self.row = ("31076466", 37.5042, 127.0531, datetime(2026, 9, 3), datetime(2026, 9, 3), "place-location-v1")
+            return self
+
+        def fetchone(self):
+            return self.row
+
+        def close(self):
+            pass
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+            self.commits = 0
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            raise AssertionError("rollback not expected")
+
+    connection = Connection()
+    repository = module.PlaceLocationRepository(connection)
+    cached = repository.get("31076466")
+    repository.upsert(PlaceLocation.create("31076466", 37.5042, 127.0531))
+
+    assert cached.place_id == "31076466"
+    assert cached.latitude == 37.5042
+    assert "merge dbo.naver_place_location" in connection.cursor_instance.executed[1][0]
+    assert connection.commits == 1
+
+
+def test_place_location_repository_preflight_accepts_exact_contract():
+    module = import_module("scripts.keyword_discovery_rank.repository")
+
+    class Cursor:
+        def __init__(self):
+            self.mode = ""
+
+        def execute(self, sql, params=None):
+            self.mode = "database" if "DB_NAME" in sql else "schema"
+            return self
+
+        def fetchone(self):
+            return ("naverDB",)
+
+        def fetchall(self):
+            return [
+                (name, *signature)
+                for name, signature in module.EXPECTED_LOCATION_SCHEMA_COLUMNS.items()
+            ]
+
+        def close(self):
+            pass
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+    module.PlaceLocationRepository(Connection()).preflight(expected_database="naverDB")

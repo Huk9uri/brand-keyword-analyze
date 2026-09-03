@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 CREATE_SQL = ROOT / "sql" / "keyword_discovery_rank" / "01_create_tables.sql"
 VERIFY_SQL = ROOT / "sql" / "keyword_discovery_rank" / "02_verify_tables.sql"
+LOCATION_CREATE_SQL = ROOT / "sql" / "keyword_discovery_rank" / "03_create_place_location.sql"
+LOCATION_VERIFY_SQL = ROOT / "sql" / "keyword_discovery_rank" / "04_verify_place_location.sql"
 
 
 SNAPSHOT_COLUMNS = {
@@ -274,3 +276,28 @@ def test_schema_files_do_not_reference_legacy_table_or_unapproved_columns():
         "screenshot_path",
     ):
         assert banned_column not in sql
+
+
+def test_place_location_schema_is_idempotent_minimal_and_non_destructive():
+    create_sql = _normalized(LOCATION_CREATE_SQL)
+    verify_sql = _normalized(LOCATION_VERIFY_SQL)
+
+    assert "object_id(n'dbo.naver_place_location', n'u') is null" in create_sql
+    body = _table_body(LOCATION_CREATE_SQL.read_text(encoding="utf-8"), "dbo.naver_place_location")
+    assert _declared_columns(body) == {
+        "place_id": "varchar(50)",
+        "latitude": "decimal(10,7)",
+        "longitude": "decimal(10,7)",
+        "resolved_at": "datetime2(0)",
+        "verified_at": "datetime2(0)",
+        "resolver_version": "varchar(30)",
+    }
+    assert "alter column latitude decimal(10,7) null" in create_sql
+    assert "alter column longitude decimal(10,7) null" in create_sql
+    assert "primary key (place_id)" in create_sql
+    assert "check (latitude between -90 and 90)" in create_sql
+    assert "check (longitude between -180 and 180)" in create_sql
+    for banned in ("drop table", "delete from", "truncate table"):
+        assert banned not in create_sql
+        assert banned not in verify_sql
+    assert "throw" in verify_sql
