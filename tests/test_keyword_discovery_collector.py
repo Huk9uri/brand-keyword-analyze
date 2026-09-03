@@ -15,7 +15,7 @@ from scripts.keyword_discovery_rank.browser import (
     SearchPageError,
     SearchStateTimeout,
 )
-from scripts.keyword_discovery_rank.collector import KeywordDiscoveryCollector
+from scripts.keyword_discovery_rank.collector import KeywordDiscoveryCollector, _result_progress
 from scripts.keyword_discovery_rank.matching import OwnStore, OwnStoreMatcher
 from scripts.keyword_discovery_rank.models import (
     CollectStatus,
@@ -47,6 +47,17 @@ PARTIAL_HTML = """
 </ul>
 <div data-naver-search-end>검색 결과의 끝</div>
 """
+
+
+def test_collector_progress_uses_semantic_place_cards_without_nmb_identifiers():
+    html = (
+        Path(__file__).parent
+        / "fixtures"
+        / "keyword_discovery_rank"
+        / "semantic_place_cards.html"
+    ).read_text(encoding="utf-8")
+
+    assert _result_progress(html) == (2, False)
 SEARCH_URL = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
 
 
@@ -209,7 +220,7 @@ def test_immediate_success_persists_matched_final_result_and_closes_browser(tmp_
     assert snapshot.observed_result_count == 1
     assert snapshot.result_end_reached is True
     assert snapshot.final_url == SEARCH_URL
-    assert snapshot.parser_version == "dom-v3"
+    assert snapshot.parser_version == "dom-v4"
     assert results[0].is_own_store is True
     assert results[0].matched_store_id == "S1"
     assert len(factory.create_calls) == 1
@@ -536,7 +547,7 @@ def test_review_export_writes_success_html_screenshot_and_structured_final_resul
             "longitude": 127.0489,
             "normalized_query": "선릉역 국밥",
             "observed_result_count": 1,
-            "parser_version": "dom-v3",
+            "parser_version": "dom-v4",
             "query": "선릉역 국밥",
             "requested_result_limit": 20,
             "result_end_reached": True,

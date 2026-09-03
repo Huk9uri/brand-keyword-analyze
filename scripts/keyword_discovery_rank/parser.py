@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
 from .models import ParsedResult, ParsedSearch, SearchPage
+from .place_cards import canonical_place_url, is_ad_url, place_id_from_url, semantic_place_cards
 
 
-PARSER_VERSION = "dom-v3"
+PARSER_VERSION = "dom-v4"
 
 RESULT_CARD_SELECTOR = (
     "li[data-nmb_res-doc-id], li[data-nmb_rese-doc-id], "
@@ -36,7 +36,7 @@ class DomResultParser:
 
     def parse(self, page: SearchPage) -> ParsedSearch:
         soup = BeautifulSoup(page.html or "", "html.parser")
-        cards = soup.select(RESULT_CARD_SELECTOR)
+        cards = soup.select(RESULT_CARD_SELECTOR) or semantic_place_cards(soup)
         if not cards:
             direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
             cards = [direct_place] if direct_place is not None else []
@@ -82,6 +82,7 @@ def _is_ad(card: Tag) -> bool:
     )
     return (
         attribute in {"1", "true", "yes"}
+        or any(is_ad_url(_attribute(link, "href")) for link in card.select("a[href]"))
         or "_nad-" in doc_id
         or any(label == "광고" for label in blind_labels)
         or card.select_one(AD_MARKER_SELECTOR) is not None
@@ -121,21 +122,7 @@ def _attribute(node: Tag | None, name: str) -> str:
 
 
 def _place_id_from_url(detail_url: str) -> str:
-    if not detail_url:
-        return ""
-    parsed = urlparse(detail_url)
-    if parsed.netloc.casefold() == "ader.naver.com":
-        destination = parse_qs(parsed.query).get("fu", ())
-        return _place_id_from_url(destination[0]) if destination else ""
-    matched = _PATH_PLACE_ID.search(parsed.path)
-    if matched:
-        return matched.group(2)
-    query = parse_qs(parsed.query)
-    for key in ("placeId", "place_id", "id"):
-        values = query.get(key)
-        if values:
-            return values[0]
-    return ""
+    return place_id_from_url(detail_url)
 
 
 def _doc_id(card: Tag) -> str:
@@ -153,20 +140,4 @@ def _place_id_from_card(card: Tag) -> str:
 
 
 def _canonical_detail_url(detail_url: str, place_id: str) -> str:
-    candidate = detail_url
-    parsed = urlparse(candidate)
-    if parsed.netloc.casefold() == "ader.naver.com":
-        destination = parse_qs(parsed.query).get("fu", ())
-        candidate = destination[0] if destination else ""
-        parsed = urlparse(candidate)
-
-    matched = _PATH_PLACE_ID.search(parsed.path)
-    if (
-        parsed.scheme.casefold() == "https"
-        and parsed.netloc.casefold() in {"m.place.naver.com", "place.naver.com"}
-        and matched is not None
-    ):
-        return f"https://m.place.naver.com/{matched.group(1)}/{matched.group(2)}"
-    if place_id:
-        return f"https://m.place.naver.com/restaurant/{place_id}"
-    return ""
+    return canonical_place_url(detail_url, place_id)

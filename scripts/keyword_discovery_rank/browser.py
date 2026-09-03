@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
 from .models import DeviceType, SearchPage, SearchTask
+from .place_cards import semantic_place_cards
 
 
 MOBILE_SEARCH_URL = "https://m.search.naver.com/search.naver"
@@ -106,10 +107,7 @@ def detect_page_state(url: str, html: str, requested_query: str) -> str:
         return "ERROR"
     if any(marker in visible_text for marker in NO_RESULT_TEXTS):
         return "NO_RESULT"
-    if (
-        soup.select_one(RESULT_CARD_SELECTOR) is not None
-        or soup.select_one(DIRECT_PLACE_SELECTOR) is not None
-    ):
+    if semantic_place_cards(soup) or soup.select_one(RESULT_CARD_SELECTOR) is not None or soup.select_one(DIRECT_PLACE_SELECTOR) is not None:
         return "RESULTS"
     return "LOADING"
 
@@ -160,10 +158,21 @@ class BrowserSession:
 
         last_state = "LOADING"
         more_control_clicked = False
+        stable_signature: tuple[int, int] | None = None
+        stable_polls = 0
         while True:
             self._capture()
             last_state = detect_page_state(self._last_url, self._last_html, task.query)
             observed_count, end_reached = _result_progress(self._last_html)
+            signature = (len(self._last_html), observed_count)
+            if last_state == "RESULTS" and signature == stable_signature:
+                stable_polls += 1
+            elif last_state == "RESULTS":
+                stable_signature = signature
+                stable_polls = 1
+            else:
+                stable_signature = None
+                stable_polls = 0
 
             if last_state == "ERROR":
                 raise SearchPageError(
@@ -173,7 +182,9 @@ class BrowserSession:
                 )
             if last_state == "NO_RESULT":
                 return SearchPage(self._last_url, self._last_html, "NO_RESULT", 0, True)
-            if last_state == "RESULTS" and (observed_count >= self.result_limit or end_reached):
+            if last_state == "RESULTS" and (
+                observed_count >= self.result_limit or end_reached or stable_polls >= 3
+            ):
                 return SearchPage(
                     self._last_url,
                     self._last_html,
@@ -195,6 +206,9 @@ class BrowserSession:
                 try:
                     if not more_control_clicked:
                         more_control_clicked = self._click_more_results_if_available()
+                        if more_control_clicked:
+                            stable_signature = None
+                            stable_polls = 0
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 except Exception as exc:
                     raise self._session_error("failed while expanding search results", exc) from exc
@@ -332,7 +346,8 @@ def _build_search_url(task: SearchTask) -> str:
 
 def _result_progress(html: str) -> tuple[int, bool]:
     soup = BeautifulSoup(html or "", "html.parser")
-    count = len(soup.select(RESULT_CARD_SELECTOR))
+    identified_cards = soup.select(RESULT_CARD_SELECTOR)
+    count = len(identified_cards) if identified_cards else len(semantic_place_cards(soup))
     direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
     if count == 0 and direct_place is not None:
         return 1, True

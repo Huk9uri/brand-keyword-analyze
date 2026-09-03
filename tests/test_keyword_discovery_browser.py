@@ -326,6 +326,38 @@ def test_live_mobile_cards_are_results_and_more_control_is_not_an_end_marker():
     assert _result_progress(html) == (2, False)
 
 
+def test_semantic_place_links_are_results_without_nmb_identifiers():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A4%EB%A0%81%ED%83%95"
+    html = fixture("semantic_place_cards.html")
+
+    assert detect_page_state(url, html, "설렁탕") == "RESULTS"
+    assert _result_progress(html) == (2, False)
+
+
+def test_search_accepts_short_semantic_results_after_dom_stabilizes():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A4%EB%A0%81%ED%83%95"
+    driver = FakeDriver([(url, fixture("semantic_place_cards.html"))])
+
+    page = make_session(driver, result_limit=5).search(
+        SearchTask(
+            "semantic",
+            "설렁탕",
+            "S1",
+            "한촌설렁탕 선릉역점",
+            "선릉역점",
+            37.5035014,
+            127.0517059,
+            SourceType.EXCEL,
+            "semantic",
+            DeviceType.MOBILE,
+        )
+    )
+
+    assert page.state == "RESULTS"
+    assert page.observed_result_count == 2
+    assert page.result_end_reached is False
+
+
 def test_search_clicks_live_more_control_once_before_continuing_scroll_expansion():
     url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
     expandable = fixture("live_mobile_mixed_results.html")
