@@ -24,6 +24,7 @@ class CollectStatus(str, Enum):
     PARSER_ERROR = "PARSER_ERROR"
     SEARCH_ERROR = "SEARCH_ERROR"
     VALIDATION_ERROR = "VALIDATION_ERROR"
+    LOCATION_RESOLVE_ERROR = "LOCATION_RESOLVE_ERROR"
 
 
 class MatchMethod(str, Enum):
@@ -41,8 +42,8 @@ class SearchTask:
     target_store_id: str
     target_store_name: str
     location_name: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     source_type: SourceType
     source_id: str
     device_type: DeviceType = DeviceType.MOBILE

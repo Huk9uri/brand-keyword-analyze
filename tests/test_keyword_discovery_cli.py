@@ -21,6 +21,7 @@ from scripts.keyword_discovery_rank.models import (
     SourceType,
 )
 from scripts.keyword_discovery_rank.repository import RepositoryError
+from scripts.keyword_discovery_rank.place_location import PlaceLocation, PlaceLocationError
 
 
 HEADERS = ["검색어", "기준매장ID", "기준매장명", "조회위치명", "위도", "경도", "기기", "소스ID"]
@@ -55,6 +56,67 @@ def sample_task() -> SearchTask:
         source_id="2",
         device_type=DeviceType.MOBILE,
     )
+
+
+def test_resolve_task_locations_uses_store_place_id_and_skips_explicit_coordinates():
+    explicit = sample_task()
+    automatic = SearchTask(
+        **{**explicit.__dict__, "task_id": "auto", "source_id": "auto", "latitude": None, "longitude": None}
+    )
+
+    class Resolver:
+        calls = []
+
+        def resolve(self, place_id):
+            self.calls.append(place_id)
+            return PlaceLocation.create(place_id, 37.5042, 127.0531)
+
+    resolver = Resolver()
+    ready, failures, persistence_failures = cli._resolve_task_locations(
+        [explicit, automatic],
+        [cli.OwnStore("S1", "육수당 선릉점", "1001")],
+        resolver,
+        object(),
+        str(RUN_ID),
+        20,
+    )
+
+    assert resolver.calls == ["1001"]
+    assert ready == [explicit, automatic.__class__(**{**automatic.__dict__, "latitude": 37.5042, "longitude": 127.0531})]
+    assert failures == 0
+    assert persistence_failures == 0
+
+
+def test_resolve_task_locations_persists_task_local_resolution_failure():
+    task = SearchTask(**{**sample_task().__dict__, "latitude": None, "longitude": None})
+
+    class Resolver:
+        def resolve(self, place_id):
+            raise PlaceLocationError("matching Place coordinate evidence was not found")
+
+    class Repository:
+        saved = []
+
+        def save(self, snapshot, results):
+            self.saved.append((snapshot, results))
+
+    repository = Repository()
+    ready, failures, persistence_failures = cli._resolve_task_locations(
+        [task],
+        [cli.OwnStore("S1", "육수당 선릉점", "1001")],
+        Resolver(),
+        repository,
+        str(RUN_ID),
+        20,
+    )
+
+    assert ready == []
+    assert failures == 1
+    assert persistence_failures == 0
+    snapshot, results = repository.saved[0]
+    assert snapshot.collect_status is CollectStatus.LOCATION_RESOLVE_ERROR
+    assert snapshot.task.latitude is None and snapshot.task.longitude is None
+    assert results == ()
 
 
 def config(repo_root: Path) -> CollectorConfig:

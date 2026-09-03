@@ -28,6 +28,7 @@ def test_enums_expose_persisted_contract_values():
         "PARSER_ERROR",
         "SEARCH_ERROR",
         "VALIDATION_ERROR",
+        "LOCATION_RESOLVE_ERROR",
     ]
     assert [member.value for member in MatchMethod] == [
         "PLACE_ID",

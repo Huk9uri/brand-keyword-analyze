@@ -26,7 +26,7 @@ EXCEL_HEADERS = (
     "기기",
     "소스ID",
 )
-REQUIRED_EXCEL_HEADERS = EXCEL_HEADERS[:6]
+REQUIRED_EXCEL_HEADERS = EXCEL_HEADERS[:4]
 OWN_STORE_SHEET = "자사매장"
 OWN_STORE_HEADERS = ("매장ID", "매장명", "네이버플레이스ID", "수동매핑플레이스ID")
 
@@ -268,12 +268,14 @@ def _load_own_store_identity(worksheet: Any) -> tuple[tuple[OwnStore, ...], dict
 
 
 def build_task_key(task: SearchTask) -> str:
+    latitude = "AUTO" if task.latitude is None else f"{task.latitude:.7f}"
+    longitude = "AUTO" if task.longitude is None else f"{task.longitude:.7f}"
     key = "|".join(
         (
             normalize_query(task.query),
             task.target_store_id,
-            f"{task.latitude:.7f}",
-            f"{task.longitude:.7f}",
+            latitude,
+            longitude,
             task.device_type.value,
         )
     )
@@ -291,8 +293,21 @@ def _build_task(
     target_store_id = _text(values.get("target_store_id"))
     target_store_name = _text(values.get("target_store_name"))
     location_name = _text(values.get("location_name"))
-    latitude, latitude_error = _coordinate(values.get("latitude"), "latitude", -90, 90)
-    longitude, longitude_error = _coordinate(values.get("longitude"), "longitude", -180, 180)
+    raw_latitude = values.get("latitude")
+    raw_longitude = values.get("longitude")
+    latitude_blank = raw_latitude is None or _text(raw_latitude) == ""
+    longitude_blank = raw_longitude is None or _text(raw_longitude) == ""
+    coordinate_pair_error = None
+    if latitude_blank != longitude_blank:
+        latitude = longitude = None
+        latitude_error = longitude_error = None
+        coordinate_pair_error = "latitude and longitude must both be provided or both be blank"
+    elif latitude_blank:
+        latitude = longitude = None
+        latitude_error = longitude_error = None
+    else:
+        latitude, latitude_error = _coordinate(raw_latitude, "latitude", -90, 90)
+        longitude, longitude_error = _coordinate(raw_longitude, "longitude", -180, 180)
     device_type, device_error = _device_type(values.get("device_type"))
 
     errors = []
@@ -308,12 +323,14 @@ def _build_task(
         errors.append(latitude_error)
     if longitude_error:
         errors.append(longitude_error)
+    if coordinate_pair_error:
+        errors.append(coordinate_pair_error)
     if device_error:
         errors.append(device_error)
     if errors:
         return None, errors
 
-    assert latitude is not None and longitude is not None and device_type is not None
+    assert device_type is not None
     return (
         SearchTask(
             task_id=task_id,

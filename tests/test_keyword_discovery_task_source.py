@@ -96,6 +96,32 @@ def test_excel_source_reports_all_row_numbered_validation_errors(monkeypatch):
     assert "latitude must be a number" in message
 
 
+def test_excel_source_allows_both_coordinates_to_be_blank_for_auto_resolution(monkeypatch):
+    _mock_excel_workbook(
+        monkeypatch,
+        [["설렁탕", "S1", "한촌설렁탕 선릉역점", "선릉역점", None, None, None, "auto"]],
+    )
+
+    task = ExcelTaskSource("auto.xlsx").load()[0]
+
+    assert task.latitude is None
+    assert task.longitude is None
+    assert build_task_key(task) == hashlib.sha256(
+        "설렁탕|S1|AUTO|AUTO|MOBILE".encode("utf-8")
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("latitude,longitude", [(37.5048, None), (None, 127.0489)])
+def test_excel_source_rejects_partial_coordinate_pair(monkeypatch, latitude, longitude):
+    _mock_excel_workbook(
+        monkeypatch,
+        [["설렁탕", "S1", "한촌설렁탕 선릉역점", "선릉역점", latitude, longitude, None, "partial"]],
+    )
+
+    with pytest.raises(InputValidationError, match="latitude and longitude must both be provided or both be blank"):
+        ExcelTaskSource("partial.xlsx").load()
+
+
 def test_excel_source_keeps_first_row_for_duplicate_task_keys(monkeypatch):
     _mock_excel_workbook(
         monkeypatch,

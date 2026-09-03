@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 from uuid import UUID, uuid4
@@ -14,14 +16,22 @@ from .browser import BrowserFactory, BrowserSessionError
 from .collector import KeywordDiscoveryCollector, RunSummary
 from .config import CollectorConfig, ConfigError
 from .matching import OwnStore, OwnStoreMatcher
-from .models import CollectStatus, DeviceType, SearchTask
+from .models import CollectStatus, DeviceType, SearchSnapshot, SearchTask
 from .parser import DomResultParser
-from .repository import FatalRepositoryError, RepositoryError, SnapshotRepository
+from .place_location import PlaceLocationError, PlaceLocationResolver, PlacePageClient
+from .repository import (
+    FatalRepositoryError,
+    PlaceLocationRepository,
+    RepositoryError,
+    SnapshotRepository,
+    TaskPersistenceError,
+)
 from .task_source import (
     DatabaseTaskSource,
     ExcelTaskSource,
     InputValidationError,
     build_task_key,
+    normalize_query,
 )
 from .validation import ResultValidator
 
@@ -113,12 +123,33 @@ def main(
         repository.preflight(expected_database="naverDB")
 
         browser_factory = _make_browser_factory(collector_config)
-        preflight_session = browser_factory.create(
-            tasks[0].device_type,
-            tasks[0].latitude,
-            tasks[0].longitude,
-        )
-        _close_browser_session(preflight_session)
+        run_id = str(uuid_factory())
+        stdout.write(f"run_id={run_id}\n")
+        stdout.flush()
+
+        location_failures = 0
+        location_persistence_failures = 0
+        if any(task.latitude is None for task in tasks):
+            location_repository = PlaceLocationRepository(repository_connection)
+            location_repository.preflight(expected_database="naverDB")
+            resolver = PlaceLocationResolver(location_repository, PlacePageClient())
+            tasks, location_failures, location_persistence_failures = _resolve_task_locations(
+                tasks,
+                loaded_input.own_stores,
+                resolver,
+                repository,
+                run_id,
+                collector_config.result_limit,
+            )
+
+        if tasks:
+            assert tasks[0].latitude is not None and tasks[0].longitude is not None
+            preflight_session = browser_factory.create(
+                tasks[0].device_type,
+                tasks[0].latitude,
+                tasks[0].longitude,
+            )
+            _close_browser_session(preflight_session)
 
         matcher = OwnStoreMatcher(
             loaded_input.own_stores,
@@ -139,10 +170,15 @@ def main(
             redact=redact,
             retry_logger=_make_retry_logger(stderr),
         )
-        run_id = str(uuid_factory())
-        stdout.write(f"run_id={run_id}\n")
-        stdout.flush()
-        summary = collector.run(tasks, run_id)
+        if tasks:
+            summary = collector.run(tasks, run_id)
+        else:
+            summary = RunSummary(run_id, 0, 0, {})
+        summary = _merge_location_failures(
+            summary,
+            location_failures,
+            location_persistence_failures,
+        )
         _print_summary(summary, stdout)
         return 1 if summary.aborted or summary.persistence_failures else 0
     except (CliError, ConfigError, InputValidationError, RepositoryError, BrowserSessionError, OSError) as exc:
@@ -226,6 +262,72 @@ def _prepare_tasks(
 def _require_tasks(tasks: Sequence[SearchTask]) -> None:
     if not tasks:
         raise CliError("input did not produce any search tasks")
+
+
+def _resolve_task_locations(
+    tasks: Iterable[SearchTask],
+    own_stores: Iterable[OwnStore],
+    resolver: Any,
+    repository: Any,
+    run_id: str,
+    result_limit: int,
+) -> tuple[list[SearchTask], int, int]:
+    place_ids = {store.store_id: store.place_id for store in own_stores}
+    ready: list[SearchTask] = []
+    failures = 0
+    persistence_failures = 0
+    for task in tasks:
+        if task.latitude is not None and task.longitude is not None:
+            ready.append(task)
+            continue
+        place_id = place_ids.get(task.target_store_id)
+        try:
+            if not place_id:
+                raise PlaceLocationError("target store has no Naver Place ID")
+            location = resolver.resolve(place_id)
+            ready.append(
+                replace(task, latitude=location.latitude, longitude=location.longitude)
+            )
+        except PlaceLocationError as exc:
+            failures += 1
+            snapshot = SearchSnapshot(
+                run_id=run_id,
+                task_key=build_task_key(task),
+                task=task,
+                normalized_query=normalize_query(task.query),
+                requested_result_limit=result_limit,
+                observed_result_count=0,
+                result_end_reached=False,
+                collect_status=CollectStatus.LOCATION_RESOLVE_ERROR,
+                collect_msg=str(exc)[:1000],
+                parser_version="place-location-v1",
+                final_url=f"https://m.place.naver.com/restaurant/{place_id or ''}/home",
+                collected_at=datetime.now(),
+            )
+            try:
+                repository.save(snapshot, ())
+            except TaskPersistenceError:
+                persistence_failures += 1
+    return ready, failures, persistence_failures
+
+
+def _merge_location_failures(
+    summary: RunSummary,
+    location_failures: int,
+    persistence_failures: int,
+) -> RunSummary:
+    counts = Counter(summary.status_counts)
+    if location_failures:
+        counts[CollectStatus.LOCATION_RESOLVE_ERROR] += location_failures
+    return RunSummary(
+        run_id=summary.run_id,
+        total_tasks=summary.total_tasks + location_failures,
+        processed_tasks=summary.processed_tasks + location_failures,
+        status_counts=counts,
+        persistence_failures=summary.persistence_failures + persistence_failures,
+        aborted=summary.aborted,
+        abort_reason=summary.abort_reason,
+    )
 
 
 def _require_input_file(path: Path, label: str) -> None:

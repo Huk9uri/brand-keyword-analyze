@@ -16,6 +16,9 @@ database. Do not start the persistence pilot from CI or unattended automation.
    from identity/mapping data. The generic workbook is an input-format reference; create
    the scope-specific workbooks named in [Pilot datasets](#pilot-datasets) for any
    actual pilot stage.
+   `검색작업`의 `위도`와 `경도`는 선택 입력이다. 둘 다 입력하면 해당 좌표를
+   사용하고, 둘 다 비우면 `자사매장.네이버플레이스ID`로 좌표를 확인해
+   `dbo.naver_place_location`에 캐시한다. 둘 중 하나만 입력한 행은 거부한다.
 2. Set the collector database and browser configuration in the local `.env` only.
    Do not copy credentials into the workbook, this runbook, terminals captured for
    review, or Git.
@@ -41,7 +44,9 @@ been approved.
 
 For every non-dry run, the collector connects to the configured database and,
 before Chrome is created, runs read-only checks that `DB_NAME()` is `naverDB` and
-that the two approved tables expose exactly the required 33-column signature.
+that the two approved ranking tables expose exactly the required 33-column signature.
+When any task needs automatic coordinates, it also verifies the exact six-column
+`dbo.naver_place_location` contract before requesting the Place page.
 Target, schema, authentication, authorization, or connection failures stop the
 whole run. Only task-local insert/data failures may be counted and followed by the
 next task.
@@ -75,8 +80,9 @@ production inputs or run a larger scope before its preceding gate has passed.
 | `inputs/keyword_discovery_mobile_pilot_25.xlsx` | Five stores × five unique `MOBILE` keywords (exactly 25 tasks after deduplication) | expanded mobile pilot |
 | `inputs/keyword_discovery_mobile_pc_comparison_20.xlsx` | Ten matched query/location/store combinations, each once as `MOBILE` and once as `PC` (exactly 20 tasks after deduplication) | expanded device comparison |
 
-Every row needs target store ID/name, location name, latitude, longitude, device,
-and source ID. For the comparison workbook, keep each mobile/PC pair adjacent and
+Every row needs target store ID/name, location name, device, and source ID. Latitude
+and longitude may both be blank for Place-ID resolution. For the comparison workbook,
+keep each mobile/PC pair adjacent and
 use the same query, target store, and location/coordinates; only `기기` differs.
 
 Record the input file hash, reviewer, date, browser version, configured result
