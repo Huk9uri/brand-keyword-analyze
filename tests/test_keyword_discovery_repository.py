@@ -349,10 +349,19 @@ class FakePreflightConnection:
         return FakePreflightCursor(self)
 
 
-def test_preflight_validates_target_and_exact_column_signatures_with_selects_only():
+def test_preflight_accepts_sql_server_null_numeric_metadata_for_bit_columns():
     module = import_module("scripts.keyword_discovery_rank.repository")
     columns = [
-        (table, column, data_type, max_length, precision, scale, nullable, is_identity)
+        (
+            table,
+            column,
+            data_type,
+            max_length,
+            None if data_type == "bit" else precision,
+            None if data_type == "bit" else scale,
+            nullable,
+            is_identity,
+        )
         for (table, column), (data_type, max_length, precision, scale, nullable, is_identity) in
         module.EXPECTED_SCHEMA_COLUMNS.items()
     ]
