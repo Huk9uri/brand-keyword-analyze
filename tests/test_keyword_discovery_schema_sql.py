@@ -283,6 +283,7 @@ def test_place_location_schema_is_idempotent_minimal_and_non_destructive():
     verify_sql = _normalized(LOCATION_VERIFY_SQL)
 
     assert "object_id(n'dbo.naver_place_location', n'u') is null" in create_sql
+    assert "if db_name() <> n'naverdb'" in create_sql
     body = _table_body(LOCATION_CREATE_SQL.read_text(encoding="utf-8"), "dbo.naver_place_location")
     assert _declared_columns(body) == {
         "place_id": "varchar(50)",

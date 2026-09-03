@@ -1,6 +1,9 @@
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
+IF DB_NAME() <> N'naverDB'
+    THROW 51000, 'Run this script in naverDB.', 1;
+
 IF OBJECT_ID(N'dbo.naver_place_location', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.naver_place_location (
