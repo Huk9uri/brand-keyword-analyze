@@ -213,6 +213,7 @@ def test_save_inserts_snapshot_then_results_with_reused_identity_and_one_commit(
             True,
             "S1",
             "PLACE_ID",
+            False,
         ),
         (
             41,
@@ -227,6 +228,7 @@ def test_save_inserts_snapshot_then_results_with_reused_identity_and_one_commit(
             False,
             None,
             "NONE",
+            False,
         ),
     )
     assert connection.events.count(("commit",)) == 1
@@ -370,7 +372,7 @@ def test_preflight_accepts_sql_server_null_numeric_metadata_for_bit_columns():
 
     module.SnapshotRepository(connection).preflight(expected_database="naverDB")
 
-    assert len(module.EXPECTED_SCHEMA_COLUMNS) == 33
+    assert len(module.EXPECTED_SCHEMA_COLUMNS) == 34
     assert module.EXPECTED_SCHEMA_COLUMNS[("naver_keyword_discovery_snapshot", "run_id")][0] == (
         "uniqueidentifier"
     )

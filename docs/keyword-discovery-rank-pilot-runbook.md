@@ -16,9 +16,9 @@ database. Do not start the persistence pilot from CI or unattended automation.
    from identity/mapping data. The generic workbook is an input-format reference; create
    the scope-specific workbooks named in [Pilot datasets](#pilot-datasets) for any
    actual pilot stage.
-   `검색작업`의 `위도`와 `경도`는 선택 입력이다. 둘 다 입력하면 해당 좌표를
-   사용하고, 둘 다 비우면 `자사매장.네이버플레이스ID`로 좌표를 확인해
-   `dbo.naver_place_location`에 캐시한다. 둘 중 하나만 입력한 행은 거부한다.
+   현재 운영 경로는 좌표를 사용하지 않는다. `검색작업`의 `위도`와 `경도`가
+   비어 있어도 정상 입력이며, 값이 존재하더라도 브라우저 위치로 전달하지
+   않는다. 기존 좌표 컬럼과 캐시 테이블은 스키마 호환을 위해 유지한다.
 2. Set the collector database and browser configuration in the local `.env` only.
    Do not copy credentials into the workbook, this runbook, terminals captured for
    review, or Git.
@@ -118,12 +118,17 @@ and the collector output:
 - requested limit, observed result count, end-marker state, collection status, and
   collection message;
 - raw position, organic rank, place ID, place name, category, ad flag, detail URL,
-  distance, own-store flag, matched store ID, and match method;
+  optional Naver distance text, own-store flag, target-store flag, matched store ID,
+  and match method;
 - DOM screenshot/HTML evidence path, manual DOM value, reviewer decision, reviewer,
   timestamp, and discrepancy notes.
 
 `PARTIAL` outcomes are evidence for diagnosis only. Exclude `PARTIAL` rows and
 tasks from all scoring denominators; resolve or rerun them before expansion.
+
+`distance_text`는 화면에 존재할 때 보존하는 원문 증거일 뿐이다. 카드 문구로
+검색 기준 위치를 추정하거나, 이를 경쟁 강도·빈집 여부·자사 노출 가능성 점수에
+반영하지 않는다. 거리 원문이 없더라도 정상 결과로 인정한다.
 
 ## Acceptance gates
 

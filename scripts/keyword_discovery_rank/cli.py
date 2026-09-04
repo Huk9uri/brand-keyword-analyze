@@ -127,27 +127,11 @@ def main(
         stdout.write(f"run_id={run_id}\n")
         stdout.flush()
 
-        location_failures = 0
-        location_persistence_failures = 0
-        if any(task.latitude is None for task in tasks):
-            location_repository = PlaceLocationRepository(repository_connection)
-            location_repository.preflight(expected_database="naverDB")
-            resolver = PlaceLocationResolver(location_repository, PlacePageClient())
-            tasks, location_failures, location_persistence_failures = _resolve_task_locations(
-                tasks,
-                loaded_input.own_stores,
-                resolver,
-                repository,
-                run_id,
-                collector_config.result_limit,
-            )
-
         if tasks:
-            assert tasks[0].latitude is not None and tasks[0].longitude is not None
             preflight_session = browser_factory.create(
                 tasks[0].device_type,
-                tasks[0].latitude,
-                tasks[0].longitude,
+                None,
+                None,
             )
             _close_browser_session(preflight_session)
 
@@ -174,11 +158,6 @@ def main(
             summary = collector.run(tasks, run_id)
         else:
             summary = RunSummary(run_id, 0, 0, {})
-        summary = _merge_location_failures(
-            summary,
-            location_failures,
-            location_persistence_failures,
-        )
         _print_summary(summary, stdout)
         return 1 if summary.aborted or summary.persistence_failures else 0
     except (CliError, ConfigError, InputValidationError, RepositoryError, BrowserSessionError, OSError) as exc:

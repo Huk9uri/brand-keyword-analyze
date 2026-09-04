@@ -30,7 +30,7 @@ RESULT_CARD_SELECTOR = (
 DIRECT_PLACE_SELECTOR = "[data-laim-exp-id^='nmb_lpa']"
 RESULT_END_SELECTOR = "[data-naver-search-end]"
 MORE_RESULTS_XPATH = (
-    "//*[@role='button' and "
+    "//*[@id='place-app-root']//*[@role='button' and "
     "contains(normalize-space(.), '펼쳐서 더보기')]"
 )
 NO_RESULT_TEXTS = ("검색결과가 없습니다", "검색 결과가 없습니다")
@@ -163,13 +163,13 @@ class BrowserSession:
 
         last_state = "LOADING"
         more_control_clicked = False
-        stable_signature: tuple[int, int] | None = None
+        stable_signature: int | None = None
         stable_polls = 0
         while True:
             self._capture()
             last_state = detect_page_state(self._last_url, self._last_html, task.query)
             observed_count, end_reached = _result_progress(self._last_html)
-            signature = (len(self._last_html), observed_count)
+            signature = observed_count
             if last_state == "RESULTS" and signature == stable_signature:
                 stable_polls += 1
             elif last_state == "RESULTS":
@@ -187,6 +187,25 @@ class BrowserSession:
                 )
             if last_state == "NO_RESULT":
                 return SearchPage(self._last_url, self._last_html, "NO_RESULT", 0, True)
+            if (
+                last_state == "RESULTS"
+                and observed_count < self.result_limit
+                and not end_reached
+                and not more_control_clicked
+            ):
+                try:
+                    more_control_clicked = self._click_more_results_if_available()
+                    if more_control_clicked:
+                        stable_signature = None
+                        stable_polls = 0
+                except Exception as exc:
+                    raise self._session_error("failed while expanding search results", exc) from exc
+            expanded_end_reached = (
+                last_state == "RESULTS"
+                and more_control_clicked
+                and stable_polls >= 3
+                and not self._more_results_control_available()
+            )
             if last_state == "RESULTS" and (
                 observed_count >= self.result_limit or end_reached or stable_polls >= 3
             ):
@@ -195,7 +214,7 @@ class BrowserSession:
                     self._last_html,
                     "RESULTS",
                     observed_count,
-                    end_reached,
+                    end_reached or expanded_end_reached,
                 )
 
             if self._monotonic() >= deadline:
@@ -209,11 +228,6 @@ class BrowserSession:
 
             if last_state == "RESULTS":
                 try:
-                    if not more_control_clicked:
-                        more_control_clicked = self._click_more_results_if_available()
-                        if more_control_clicked:
-                            stable_signature = None
-                            stable_polls = 0
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 except Exception as exc:
                     raise self._session_error("failed while expanding search results", exc) from exc
@@ -264,6 +278,12 @@ class BrowserSession:
                 return True
         return False
 
+    def _more_results_control_available(self) -> bool:
+        return any(
+            element.is_displayed() and element.is_enabled()
+            for element in self.driver.find_elements(By.XPATH, MORE_RESULTS_XPATH)
+        )
+
     def _activate_current_location_if_needed(self) -> None:
         if LOCATION_UNAVAILABLE_TEXT not in self._last_html:
             return
@@ -313,8 +333,8 @@ class BrowserFactory:
     def create(
         self,
         device_type: DeviceType,
-        latitude: float,
-        longitude: float,
+        latitude: float | None,
+        longitude: float | None,
     ) -> BrowserSession:
         options = Options()
         if self.headless:
@@ -330,19 +350,20 @@ class BrowserFactory:
         try:
             driver = self._driver_builder(options=options)
             driver.set_window_size(*viewport)
-            driver.execute_cdp_cmd(
-                "Emulation.setGeolocationOverride",
-                {"latitude": latitude, "longitude": longitude, "accuracy": 100},
-            )
-            search_origin = (
-                "https://m.search.naver.com"
-                if device_type is DeviceType.MOBILE
-                else "https://search.naver.com"
-            )
-            driver.execute_cdp_cmd(
-                "Browser.grantPermissions",
-                {"origin": search_origin, "permissions": ["geolocation"]},
-            )
+            if latitude is not None and longitude is not None:
+                driver.execute_cdp_cmd(
+                    "Emulation.setGeolocationOverride",
+                    {"latitude": latitude, "longitude": longitude, "accuracy": 100},
+                )
+                search_origin = (
+                    "https://m.search.naver.com"
+                    if device_type is DeviceType.MOBILE
+                    else "https://search.naver.com"
+                )
+                driver.execute_cdp_cmd(
+                    "Browser.grantPermissions",
+                    {"origin": search_origin, "permissions": ["geolocation"]},
+                )
         except Exception as exc:
             raise BrowserSessionError(
                 f"failed to create browser session: {exc}",

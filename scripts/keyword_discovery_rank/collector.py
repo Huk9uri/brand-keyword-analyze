@@ -231,13 +231,17 @@ class KeywordDiscoveryCollector:
             page = replace(
                 page,
                 observed_result_count=observed_count,
-                result_end_reached=end_reached,
+                result_end_reached=page.result_end_reached or end_reached,
             )
             try:
                 parsed = self.parser.parse(page)
                 validation = self.validator.validate(parsed, self.result_limit)
                 matched_results = tuple(
-                    self.matcher.match(result).apply_to(result) for result in validation.results
+                    _mark_target_store(
+                        self.matcher.match(result).apply_to(result),
+                        task.target_store_id,
+                    )
+                    for result in validation.results
                 )
             except Exception as exc:
                 final_attempt = self._page_failure(
@@ -270,14 +274,14 @@ class KeywordDiscoveryCollector:
         return replace(final_attempt, retry_history=tuple(retry_history))
 
     def _ensure_session(self, task: SearchTask) -> Any:
-        profile = (task.device_type, task.latitude, task.longitude)
+        profile = task.device_type
         if self._session is not None and self._session_profile != profile:
             self._discard_session()
         if self._session is None:
             self._session = self.browser_factory.create(
                 task.device_type,
-                task.latitude,
-                task.longitude,
+                None,
+                None,
             )
             self._session_profile = profile
         return self._session
@@ -455,6 +459,16 @@ def _browser_failure_status(error: Exception) -> CollectStatus:
     return CollectStatus.SEARCH_ERROR
 
 
+def _mark_target_store(result: ParsedResult, target_store_id: str) -> ParsedResult:
+    return replace(
+        result,
+        is_target_store=(
+            result.is_own_store
+            and result.matched_store_id == target_store_id
+        ),
+    )
+
+
 def _result_progress(html: str) -> tuple[int, bool]:
     return browser_result_progress(html)
 
@@ -517,6 +531,7 @@ def _result_export(result: ParsedResult) -> dict[str, object]:
         "detail_url": result.detail_url,
         "distance_text": result.distance_text,
         "is_own_store": result.is_own_store,
+        "is_target_store": result.is_target_store,
         "matched_store_id": result.matched_store_id,
         "match_method": result.match_method.value,
     }

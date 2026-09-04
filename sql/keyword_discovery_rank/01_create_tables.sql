@@ -49,6 +49,7 @@ BEGIN
         is_own_store bit NOT NULL,
         matched_store_id nvarchar(100) NULL,
         match_method varchar(30) NOT NULL,
+        is_target_store bit NOT NULL CONSTRAINT DF_naver_keyword_discovery_result_is_target_store DEFAULT (0),
         CONSTRAINT PK_naver_keyword_discovery_result PRIMARY KEY (snapshot_id, raw_position),
         CONSTRAINT FK_naver_keyword_discovery_result_snapshot FOREIGN KEY (snapshot_id) REFERENCES dbo.naver_keyword_discovery_snapshot(snapshot_id),
         CONSTRAINT CK_naver_keyword_discovery_result_raw_position CHECK (raw_position >= 1),

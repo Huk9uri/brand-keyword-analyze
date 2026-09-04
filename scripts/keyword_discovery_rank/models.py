@@ -71,6 +71,7 @@ class ParsedResult:
     is_own_store: bool = False
     matched_store_id: str | None = None
     match_method: MatchMethod = MatchMethod.NONE
+    is_target_store: bool = False
 
 
 @dataclass(frozen=True)

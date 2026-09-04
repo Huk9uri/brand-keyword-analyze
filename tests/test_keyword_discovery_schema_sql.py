@@ -7,6 +7,7 @@ CREATE_SQL = ROOT / "sql" / "keyword_discovery_rank" / "01_create_tables.sql"
 VERIFY_SQL = ROOT / "sql" / "keyword_discovery_rank" / "02_verify_tables.sql"
 LOCATION_CREATE_SQL = ROOT / "sql" / "keyword_discovery_rank" / "03_create_place_location.sql"
 LOCATION_VERIFY_SQL = ROOT / "sql" / "keyword_discovery_rank" / "04_verify_place_location.sql"
+TARGET_STORE_MIGRATION_SQL = ROOT / "sql" / "keyword_discovery_rank" / "05_add_is_target_store.sql"
 
 
 SNAPSHOT_COLUMNS = {
@@ -46,6 +47,7 @@ RESULT_COLUMNS = {
     "is_own_store": "bit",
     "matched_store_id": "nvarchar(100)",
     "match_method": "varchar(30)",
+    "is_target_store": "bit",
 }
 
 LOOKUP_INDEXES = {
@@ -82,6 +84,31 @@ LOOKUP_INDEXES = {
 
 def _normalized(path: Path) -> str:
     return re.sub(r"\s+", " ", path.read_text(encoding="utf-8").lower()).strip()
+
+
+def test_verify_script_sets_required_indexed_object_session_options():
+    sql = _normalized(VERIFY_SQL)
+
+    for option in (
+        "set ansi_nulls on",
+        "set ansi_padding on",
+        "set ansi_warnings on",
+        "set arithabort on",
+        "set concat_null_yields_null on",
+        "set quoted_identifier on",
+        "set numeric_roundabort off",
+    ):
+        assert option in sql
+
+
+def test_target_store_migration_separates_column_add_from_backfill_compilation():
+    sql = TARGET_STORE_MIGRATION_SQL.read_text(encoding="utf-8")
+    batches = re.split(r"(?im)^\s*go\s*$", sql)
+
+    assert len(batches) >= 2
+    assert "add is_target_store" in batches[0].lower()
+    assert "update result" not in batches[0].lower()
+    assert "update result" in batches[1].lower()
 
 
 def _table_body(sql: str, table: str) -> str:

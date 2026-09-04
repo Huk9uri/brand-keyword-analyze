@@ -1,4 +1,11 @@
 SET NOCOUNT ON;
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
 
 IF OBJECT_ID(N'dbo.naver_keyword_discovery_snapshot', N'U') IS NULL
     THROW 51000, 'Missing dbo.naver_keyword_discovery_snapshot.', 1;
@@ -61,7 +68,8 @@ VALUES
     (N'naver_keyword_discovery_result', N'distance_text', N'nvarchar', 200, 0, 0, 1, 0),
     (N'naver_keyword_discovery_result', N'is_own_store', N'bit', 1, 1, 0, 0, 0),
     (N'naver_keyword_discovery_result', N'matched_store_id', N'nvarchar', 200, 0, 0, 1, 0),
-    (N'naver_keyword_discovery_result', N'match_method', N'varchar', 30, 0, 0, 0, 0);
+    (N'naver_keyword_discovery_result', N'match_method', N'varchar', 30, 0, 0, 0, 0),
+    (N'naver_keyword_discovery_result', N'is_target_store', N'bit', 1, 1, 0, 0, 0);
 
 IF EXISTS (
     SELECT 1

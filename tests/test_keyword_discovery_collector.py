@@ -15,11 +15,17 @@ from scripts.keyword_discovery_rank.browser import (
     SearchPageError,
     SearchStateTimeout,
 )
-from scripts.keyword_discovery_rank.collector import KeywordDiscoveryCollector, _result_progress
+from scripts.keyword_discovery_rank.collector import (
+    KeywordDiscoveryCollector,
+    _mark_target_store,
+    _result_progress,
+)
 from scripts.keyword_discovery_rank.matching import OwnStore, OwnStoreMatcher
 from scripts.keyword_discovery_rank.models import (
     CollectStatus,
     DeviceType,
+    MatchMethod,
+    ParsedResult,
     SearchPage,
     SearchTask,
     SourceType,
@@ -66,6 +72,7 @@ def task(
     *,
     latitude: float = 37.5048,
     query: str = "선릉역 국밥",
+    device_type: DeviceType = DeviceType.MOBILE,
 ) -> SearchTask:
     return SearchTask(
         task_id=f"row-{index}",
@@ -77,7 +84,7 @@ def task(
         longitude=127.0489,
         source_type=SourceType.EXCEL,
         source_id=str(index),
-        device_type=DeviceType.MOBILE,
+        device_type=device_type,
     )
 
 
@@ -223,8 +230,29 @@ def test_immediate_success_persists_matched_final_result_and_closes_browser(tmp_
     assert snapshot.parser_version == "dom-v4"
     assert results[0].is_own_store is True
     assert results[0].matched_store_id == "S1"
+    assert results[0].is_target_store is True
     assert len(factory.create_calls) == 1
+    assert factory.create_calls == [(DeviceType.MOBILE, None, None)]
     assert session.driver.quit_calls == 1
+
+
+def test_target_store_requires_matched_store_id_to_equal_task_target():
+    brand_store = ParsedResult(
+        1,
+        1,
+        "2002",
+        "육수당 다른 지점",
+        "한식",
+        False,
+        "https://m.place.naver.com/restaurant/2002",
+        None,
+        True,
+        "S2",
+        MatchMethod.PLACE_ID,
+    )
+
+    assert _mark_target_store(brand_store, "S1").is_target_store is False
+    assert _mark_target_store(brand_store, "S2").is_target_store is True
 
 
 def test_final_html_is_authoritative_for_persisted_count_and_end_state(tmp_path: Path):
@@ -237,6 +265,22 @@ def test_final_html_is_authoritative_for_persisted_count_and_end_state(tmp_path:
     snapshot, _ = repository.saved[0]
     assert snapshot.collect_status is CollectStatus.SUCCESS
     assert snapshot.observed_result_count == 1
+    assert snapshot.result_end_reached is True
+
+
+def test_browser_confirmed_expansion_end_survives_final_html_recount(tmp_path: Path):
+    html_without_end_marker = SUCCESS_HTML.replace(
+        '<div data-naver-search-end>검색 결과의 끝</div>',
+        "",
+    )
+    page = SearchPage(SEARCH_URL, html_without_end_marker, "RESULTS", 1, True)
+    session = FakeSession([page])
+    instance, _, repository = collector(tmp_path, [session])
+
+    instance.run([task()], "run-browser-confirmed-end")
+
+    snapshot, _ = repository.saved[0]
+    assert snapshot.collect_status is CollectStatus.SUCCESS
     assert snapshot.result_end_reached is True
 
 
@@ -399,7 +443,7 @@ def test_final_failure_does_not_prevent_next_distinct_task(tmp_path: Path):
     next_session = FakeSession([success_page()])
     instance, _, repository = collector(tmp_path, [session, next_session])
 
-    summary = instance.run([task(1), task(2, latitude=37.6)], "run-continue")
+    summary = instance.run([task(1), task(2, device_type=DeviceType.PC)], "run-continue")
 
     assert summary.processed_tasks == 2
     assert summary.status_counts == {
@@ -527,6 +571,7 @@ def test_review_export_writes_success_html_screenshot_and_structured_final_resul
                 "distance_text": None,
                 "is_ad": False,
                 "is_own_store": True,
+                "is_target_store": True,
                 "match_method": "PLACE_ID",
                 "matched_store_id": "S1",
                 "organic_rank": 1,

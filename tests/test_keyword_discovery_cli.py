@@ -318,7 +318,7 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
 
     class FakeBrowserFactory:
         def create(self, device_type, latitude, longitude):
-            assert (device_type, latitude, longitude) == (DeviceType.PC, 37.5048, 127.0489)
+            assert (device_type, latitude, longitude) == (DeviceType.PC, None, None)
             events.append("chrome-preflight")
             return PreflightSession()
 

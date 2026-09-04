@@ -94,9 +94,10 @@ INSERT INTO dbo.naver_keyword_discovery_result (
     distance_text,
     is_own_store,
     matched_store_id,
-    match_method
+    match_method,
+    is_target_store
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 RESULT_COUNT_SQL = """
@@ -161,6 +162,7 @@ EXPECTED_SCHEMA_COLUMNS = {
     ("naver_keyword_discovery_result", "is_own_store"): ("bit", None, None, None, "NO", 0),
     ("naver_keyword_discovery_result", "matched_store_id"): ("nvarchar", 100, None, None, "YES", 0),
     ("naver_keyword_discovery_result", "match_method"): ("varchar", 30, None, None, "NO", 0),
+    ("naver_keyword_discovery_result", "is_target_store"): ("bit", None, None, None, "NO", 0),
 }
 
 _FATAL_SQL_ERROR_CODES = frozenset(
@@ -388,6 +390,7 @@ def _result_values(snapshot_id: int, result: ParsedResult) -> tuple[object, ...]
         result.is_own_store,
         result.matched_store_id,
         result.match_method.value,
+        result.is_target_store,
     )
 
 

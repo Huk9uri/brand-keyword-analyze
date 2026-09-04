@@ -429,9 +429,58 @@ def test_search_clicks_live_more_control_once_before_continuing_scroll_expansion
     assert page.observed_result_count == 20
     assert button.clicks == 1
     assert driver.find_element_calls == [(By.XPATH, driver.find_element_calls[0][1])]
+    assert "@id='place-app-root'" in driver.find_element_calls[0][1]
     assert "role='button'" in driver.find_element_calls[0][1]
     assert "펼쳐서 더보기" in driver.find_element_calls[0][1]
     assert len(driver.script_calls) == 1
+
+
+def test_search_confirms_end_when_clicked_more_control_disappears_after_stable_expansion():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    driver = FakeDriver([(url, result_html(8)), (url, result_html(16))])
+
+    class MoreButton:
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def click(self):
+            driver.more_button = None
+
+    driver.more_button = MoreButton()
+
+    page = make_session(driver, timeout_seconds=4).search(make_task())
+
+    assert page.observed_result_count == 16
+    assert page.result_end_reached is True
+
+
+def test_search_confirms_expanded_end_when_non_result_html_keeps_changing():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+    changing_pages = [(url, result_html(8))] + [
+        (url, result_html(16).replace("</body>", f"<!-- dynamic-{index * 'x'} --></body>"))
+        for index in range(1, 10)
+    ]
+    driver = FakeDriver(changing_pages)
+
+    class MoreButton:
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def click(self):
+            driver.more_button = None
+
+    driver.more_button = MoreButton()
+
+    page = make_session(driver, timeout_seconds=5).search(make_task())
+
+    assert page.observed_result_count == 16
+    assert page.result_end_reached is True
 
 
 def test_search_clicks_more_control_when_it_appears_after_initial_scroll():
@@ -466,6 +515,43 @@ def test_search_clicks_more_control_when_it_appears_after_initial_scroll():
     assert page.observed_result_count == 20
     assert button.clicks == 1
     assert len(driver.find_element_calls) == 2
+
+
+def test_search_checks_for_more_control_before_accepting_stable_short_results():
+    url = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
+
+    class MoreButton:
+        def __init__(self):
+            self.clicks = 0
+
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def click(self):
+            self.clicks += 1
+
+    button = MoreButton()
+
+    class LateMoreDriver(FakeDriver):
+        def find_elements(self, by: str, value: str):
+            self.find_element_calls.append((by, value))
+            more_checks = sum(
+                1 for call_by, call_value in self.find_element_calls
+                if call_by == By.XPATH and call_value == value
+            )
+            return [button] if more_checks >= 3 else []
+
+    driver = LateMoreDriver(
+        [(url, result_html(16)), (url, result_html(16)), (url, result_html(16)), (url, result_html(20))]
+    )
+
+    page = make_session(driver, timeout_seconds=6).search(make_task())
+
+    assert page.observed_result_count == 20
+    assert button.clicks == 1
 
 
 def test_search_does_not_repeat_more_click_while_stuck_before_timeout():

@@ -121,7 +121,7 @@ def test_fixture_workbook_flows_through_collection_pipeline_once_and_persists_or
     assert summary.processed_tasks == 1
     assert summary.status_counts == {CollectStatus.SUCCESS: 1}
     assert len(factory.create_calls) == 1
-    assert factory.create_calls == [(DeviceType.MOBILE, 37.5048, 127.0489)]
+    assert factory.create_calls == [(DeviceType.MOBILE, None, None)]
     assert len(session.search_tasks) == 1
     assert session.closed is True
     assert len(repository.saved) == 1
@@ -134,6 +134,7 @@ def test_fixture_workbook_flows_through_collection_pipeline_once_and_persists_or
     assert [row.organic_rank for row in results] == [1, None, 2, 3]
     assert [row.place_id for row in results] == ["1001", "9001", "1002", "1003"]
     assert [row.is_own_store for row in results] == [True, False, False, False]
+    assert [row.is_target_store for row in results] == [True, False, False, False]
     assert [row.matched_store_id for row in results] == ["S1", None, None, None]
     assert [row.match_method for row in results] == [
         MatchMethod.PLACE_ID,
