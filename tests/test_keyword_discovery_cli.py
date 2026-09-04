@@ -1,0 +1,623 @@
+from __future__ import annotations
+
+import subprocess
+import os
+from io import StringIO
+from pathlib import Path
+from uuid import UUID
+
+import pytest
+from openpyxl import Workbook
+
+from scripts.keyword_discovery_rank import cli
+from scripts.keyword_discovery_rank.collector import RunSummary
+from scripts.keyword_discovery_rank.config import CollectorConfig
+from scripts.keyword_discovery_rank.models import (
+    CollectStatus,
+    DeviceType,
+    MatchMethod,
+    ParsedResult,
+    SearchTask,
+    SourceType,
+)
+from scripts.keyword_discovery_rank.repository import RepositoryError
+from scripts.keyword_discovery_rank.place_location import PlaceLocation, PlaceLocationError
+
+
+HEADERS = ["검색어", "기준매장ID", "기준매장명", "조회위치명", "위도", "경도", "기기", "소스ID"]
+RUN_ID = UUID("11111111-1111-1111-1111-111111111111")
+
+
+def write_input(path: Path, rows: list[list[object]]) -> Path:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "검색작업"
+    worksheet.append(HEADERS)
+    for row in rows:
+        worksheet.append(row)
+    stores = workbook.create_sheet("자사매장")
+    stores.append(["매장ID", "매장명", "네이버플레이스ID", "수동매핑플레이스ID"])
+    stores.append(["S1", "육수당 선릉점", "1001", "legacy-1001"])
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def sample_task() -> SearchTask:
+    return SearchTask(
+        task_id="row-2",
+        query="선릉역 국밥",
+        target_store_id="S1",
+        target_store_name="육수당 선릉점",
+        location_name="선릉점",
+        latitude=37.5048,
+        longitude=127.0489,
+        source_type=SourceType.EXCEL,
+        source_id="2",
+        device_type=DeviceType.MOBILE,
+    )
+
+
+def test_resolve_task_locations_uses_store_place_id_and_skips_explicit_coordinates():
+    explicit = sample_task()
+    automatic = SearchTask(
+        **{**explicit.__dict__, "task_id": "auto", "source_id": "auto", "latitude": None, "longitude": None}
+    )
+
+    class Resolver:
+        calls = []
+
+        def resolve(self, place_id):
+            self.calls.append(place_id)
+            return PlaceLocation.create(place_id, 37.5042, 127.0531)
+
+    resolver = Resolver()
+    ready, failures, persistence_failures = cli._resolve_task_locations(
+        [explicit, automatic],
+        [cli.OwnStore("S1", "육수당 선릉점", "1001")],
+        resolver,
+        object(),
+        str(RUN_ID),
+        20,
+    )
+
+    assert resolver.calls == ["1001"]
+    assert ready == [explicit, automatic.__class__(**{**automatic.__dict__, "latitude": 37.5042, "longitude": 127.0531})]
+    assert failures == 0
+    assert persistence_failures == 0
+
+
+def test_resolve_task_locations_persists_task_local_resolution_failure():
+    task = SearchTask(**{**sample_task().__dict__, "latitude": None, "longitude": None})
+
+    class Resolver:
+        def resolve(self, place_id):
+            raise PlaceLocationError("matching Place coordinate evidence was not found")
+
+    class Repository:
+        saved = []
+
+        def save(self, snapshot, results):
+            self.saved.append((snapshot, results))
+
+    repository = Repository()
+    ready, failures, persistence_failures = cli._resolve_task_locations(
+        [task],
+        [cli.OwnStore("S1", "육수당 선릉점", "1001")],
+        Resolver(),
+        repository,
+        str(RUN_ID),
+        20,
+    )
+
+    assert ready == []
+    assert failures == 1
+    assert persistence_failures == 0
+    snapshot, results = repository.saved[0]
+    assert snapshot.collect_status is CollectStatus.LOCATION_RESOLVE_ERROR
+    assert snapshot.task.latitude is None and snapshot.task.longitude is None
+    assert results == ()
+
+
+def config(repo_root: Path) -> CollectorConfig:
+    return CollectorConfig(
+        db_server="db.internal",
+        db_port=1433,
+        db_database="naverDB",
+        db_user="collector-writer",
+        db_password="top-secret-password",
+        db_encrypt=True,
+        headless=True,
+        timeout_seconds=30,
+        artifact_root=repo_root / "artifacts" / "keyword_discovery_rank",
+    )
+
+
+def test_parse_args_accepts_task7_interface_and_requires_bounded_limit(tmp_path: Path):
+    args = cli.parse_args(
+        [
+            "--input",
+            str(tmp_path / "queries.xlsx"),
+            "--source",
+            "excel",
+            "--device-override",
+            "PC",
+            "--limit",
+            "7",
+            "--dry-run",
+            "--rollback-test",
+        ]
+    )
+
+    assert args.input == tmp_path / "queries.xlsx"
+    assert args.source == "excel"
+    assert args.device_override is DeviceType.PC
+    assert args.limit == 7
+    assert args.dry_run is True
+    assert args.rollback_test is True
+
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--input", str(tmp_path / "queries.xlsx"), "--limit", "0"])
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--input", str(tmp_path / "queries.xlsx"), "--limit", "21"])
+
+
+def test_excel_dry_run_validates_and_deduplicates_without_config_browser_or_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    input_path = write_input(
+        tmp_path / "queries.xlsx",
+        [
+            [" 선릉역  국밥 ", "S1", "육수당 선릉점", "선릉점", 37.5048, 127.0489, None, "first"],
+            ["선릉역 국밥", "S1", "다른 표시명", "다른 위치", 37.5048, 127.0489, "MOBILE", "second"],
+        ],
+    )
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: (_ for _ in ()).throw(AssertionError("config constructed"))),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_connect_database",
+        lambda collector_config: (_ for _ in ()).throw(AssertionError("database constructed")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_make_browser_factory",
+        lambda collector_config: (_ for _ in ()).throw(AssertionError("browser constructed")),
+    )
+    output = StringIO()
+    uuid_calls = []
+
+    exit_code = cli.main(
+        ["--input", str(input_path), "--dry-run"],
+        repo_root=tmp_path,
+        stdout=output,
+        uuid_factory=lambda: uuid_calls.append(True) or RUN_ID,
+    )
+
+    assert exit_code == 0
+    assert output.getvalue() == f"run_id={RUN_ID} total=1 dry_run=true\n"
+    assert uuid_calls == [True]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_database_source_is_disabled_before_config_database_or_browser_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+):
+    query_file = tmp_path / "candidates.sql"
+    query_file.write_text("SELECT candidate_keyword FROM candidates", encoding="utf-8")
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: (_ for _ in ()).throw(AssertionError("config constructed"))),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_connect_database",
+        lambda collector_config: (_ for _ in ()).throw(AssertionError("database constructed")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_make_browser_factory",
+        lambda collector_config: (_ for _ in ()).throw(AssertionError("browser constructed")),
+    )
+    errors = StringIO()
+
+    argv = ["--input", str(query_file), "--source", "database"]
+    if dry_run:
+        argv.append("--dry-run")
+    exit_code = cli.main(
+        argv,
+        repo_root=tmp_path,
+        stderr=errors,
+    )
+
+    assert exit_code == 2
+    assert errors.getvalue() == (
+        "error=database source is disabled in this release; use --source excel\n"
+    )
+
+
+def test_main_redacts_malformed_excel_loader_failure(
+    tmp_path: Path,
+):
+    malformed_input = tmp_path / "queries.txt"
+    malformed_input.write_text("not an Excel workbook: workbook-secret", encoding="utf-8")
+    errors = StringIO()
+
+    exit_code = cli.main(
+        ["--input", str(malformed_input)],
+        repo_root=tmp_path,
+        stderr=errors,
+    )
+
+    assert exit_code == 2
+    assert errors.getvalue() == "error=Excel input could not be loaded\n"
+    assert "workbook-secret" not in errors.getvalue()
+
+
+def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_closes_resources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    events = []
+    source_task = sample_task()
+    fake_config = config(tmp_path)
+
+    monkeypatch.setattr(
+        cli,
+        "_load_input",
+        lambda args: events.append("input") or cli.LoadedInput(
+            tasks=(source_task,),
+            own_stores=(cli.OwnStore("S1", "육수당 선릉점", "1001"),),
+            manual_place_id_mappings={"legacy-1001": "S1"},
+        ),
+    )
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: events.append("config") or fake_config),
+    )
+
+    class FakeConnection:
+        def close(self):
+            events.append("connection-close")
+
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        cli,
+        "_connect_database",
+        lambda collector_config: events.append("db-connect") or connection,
+    )
+
+    class FakeRepository:
+        def __init__(self, received_connection):
+            assert received_connection is connection
+            events.append("repository")
+
+        def preflight(self, *, expected_database):
+            assert expected_database == "naverDB"
+            events.append("db-preflight")
+
+        def close(self):
+            connection.close()
+
+    monkeypatch.setattr(cli, "SnapshotRepository", FakeRepository)
+
+    class FakeDriver:
+        def quit(self):
+            events.append("preflight-browser-close")
+
+    class PreflightSession:
+        driver = FakeDriver()
+
+    class FakeBrowserFactory:
+        def create(self, device_type, latitude, longitude):
+            assert (device_type, latitude, longitude) == (DeviceType.PC, None, None)
+            events.append("chrome-preflight")
+            return PreflightSession()
+
+    browser_factory = FakeBrowserFactory()
+
+    def make_browser_factory(received_config):
+        assert received_config.result_limit == 7
+        events.append("browser-factory")
+        return browser_factory
+
+    monkeypatch.setattr(cli, "_make_browser_factory", make_browser_factory)
+
+    class FakeCollector:
+        def __init__(
+            self,
+            received_browser_factory,
+            parser,
+            validator,
+            matcher,
+            repository,
+            **options,
+        ):
+            assert received_browser_factory is browser_factory
+            assert options["result_limit"] == 7
+            assert options["review_export"] is False
+            events.append("collector-construct")
+
+        def run(self, tasks, run_id):
+            tasks = list(tasks)
+            assert tasks[0].device_type is DeviceType.PC
+            assert run_id == str(RUN_ID)
+            assert output.getvalue() == f"run_id={RUN_ID}\n"
+            assert output.flush_calls == 1
+            events.append("collector-run")
+            return RunSummary(
+                run_id,
+                total_tasks=1,
+                processed_tasks=1,
+                status_counts={CollectStatus.SUCCESS: 1},
+            )
+
+    monkeypatch.setattr(cli, "KeywordDiscoveryCollector", FakeCollector)
+    class TrackingOutput(StringIO):
+        flush_calls = 0
+
+        def flush(self):
+            self.flush_calls += 1
+            super().flush()
+
+    output = TrackingOutput()
+    uuid_calls = []
+
+    exit_code = cli.main(
+        [
+            "--input",
+            str(tmp_path / "queries.xlsx"),
+            "--device-override",
+            "PC",
+            "--limit",
+            "7",
+        ],
+        repo_root=tmp_path,
+        stdout=output,
+        uuid_factory=lambda: uuid_calls.append(True) or RUN_ID,
+    )
+
+    assert exit_code == 0
+    assert events == [
+        "input",
+        "config",
+        "db-connect",
+        "repository",
+        "db-preflight",
+        "browser-factory",
+        "chrome-preflight",
+        "preflight-browser-close",
+        "collector-construct",
+        "collector-run",
+        "connection-close",
+    ]
+    assert uuid_calls == [True]
+    assert output.getvalue() == (
+        f"run_id={RUN_ID}\n"
+        f"run_id={RUN_ID} total=1 processed=1 SUCCESS=1 persistence_failures=0 aborted=false\n"
+    )
+    assert fake_config.db_password not in output.getvalue()
+
+
+class FakeDatabaseCursor:
+    description = None
+
+    def __init__(self):
+        self.executed = []
+        self.closed = False
+
+    def execute(self, query):
+        self.executed.append(query)
+
+    def fetchall(self):
+        return [
+            {
+                "candidate_keyword": "선릉역 국밥",
+                "store_code": "S1",
+                "store_display_name": "육수당 선릉점",
+                "search_location": "선릉점",
+                "search_latitude": 37.5048,
+                "search_longitude": 127.0489,
+                "device_code": "MOBILE",
+                "candidate_id": 42,
+            }
+        ]
+
+    def close(self):
+        self.closed = True
+
+
+class FakeDatabaseConnection:
+    def __init__(self):
+        self.created_cursor = FakeDatabaseCursor()
+        self.events = []
+
+    def cursor(self):
+        self.events.append("cursor")
+        return self.created_cursor
+
+    def commit(self):
+        self.events.append("commit")
+
+    def rollback(self):
+        self.events.append("rollback")
+
+
+def test_database_source_reads_explicit_query_file_and_closes_source_cursor(tmp_path: Path):
+    query_file = tmp_path / "candidates.sql"
+    query_file.write_text("SELECT *\nFROM dbo.candidates;\n", encoding="utf-8")
+    args = cli.parse_args(["--input", str(query_file), "--source", "database"])
+    connection = FakeDatabaseConnection()
+
+    tasks = cli.load_tasks(args, connection=connection)
+
+    assert len(tasks) == 1
+    assert tasks[0].task_id == "database-42"
+    assert connection.created_cursor.executed == ["SELECT *\nFROM dbo.candidates;\n"]
+    assert connection.created_cursor.closed is True
+
+
+def test_database_source_requires_an_existing_explicit_query_file(tmp_path: Path):
+    args = cli.parse_args(
+        ["--input", str(tmp_path / "missing.sql"), "--source", "database"]
+    )
+
+    with pytest.raises(cli.CliError, match="SQL query file"):
+        cli.load_tasks(args, connection=FakeDatabaseConnection())
+
+
+def test_rollback_connection_turns_repository_commit_into_rollback():
+    connection = FakeDatabaseConnection()
+    wrapped = cli.RollbackConnection(connection)
+
+    wrapped.commit()
+
+    assert connection.events == ["rollback"]
+
+
+def test_database_connection_failure_is_wrapped_without_exposing_password(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    collector_config = config(tmp_path)
+    monkeypatch.setattr(
+        cli.pymssql,
+        "connect",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError(collector_config.db_password)),
+    )
+
+    with pytest.raises(RepositoryError) as caught:
+        cli._connect_database(collector_config)
+
+    assert str(caught.value) == "database connection failed"
+    assert collector_config.db_password not in str(caught.value)
+
+
+def test_real_cli_input_wires_authoritative_workbook_identity_into_matcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    input_path = write_input(
+        tmp_path / "queries.xlsx",
+        [["선릉역 국밥", "S1", "표시용 별칭", "선릉점", 37.5048, 127.0489, "MOBILE", "1"]],
+    )
+    fake_config = config(tmp_path)
+    monkeypatch.setattr(
+        cli.CollectorConfig,
+        "from_env",
+        classmethod(lambda cls, repo_root: fake_config),
+    )
+
+    class FakeConnection:
+        def close(self):
+            pass
+
+    connection = FakeConnection()
+    monkeypatch.setattr(cli, "_connect_database", lambda collector_config: connection)
+
+    class FakeRepository:
+        def __init__(self, received_connection):
+            assert received_connection._connection is connection
+
+        def preflight(self, *, expected_database):
+            assert expected_database == "naverDB"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cli, "SnapshotRepository", FakeRepository)
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    class FakeBrowserFactory:
+        def create(self, *args):
+            return FakeSession()
+
+    monkeypatch.setattr(cli, "_make_browser_factory", lambda collector_config: FakeBrowserFactory())
+
+    class FakeCollector:
+        def __init__(self, browser_factory, parser, validator, matcher, repository, **options):
+            assert options["review_export"] is True
+            redacted = options["redact"](f"failure {fake_config.db_password}")
+            assert redacted == "failure [REDACTED]"
+            options["retry_logger"](f"retry message={redacted}")
+            canonical = ParsedResult(
+                1,
+                1,
+                "1001",
+                "경쟁점처럼 보이는 이름",
+                None,
+                False,
+                "https://m.place.naver.com/restaurant/1001",
+                None,
+            )
+            manual = ParsedResult(
+                2,
+                2,
+                "legacy-1001",
+                "다른 이름",
+                None,
+                False,
+                "https://m.place.naver.com/restaurant/legacy-1001",
+                None,
+            )
+            assert matcher.match(canonical).match_method is MatchMethod.PLACE_ID
+            assert matcher.match(manual).match_method is MatchMethod.MANUAL_MAPPING
+
+        def run(self, tasks, run_id):
+            return RunSummary(run_id, 1, 1, {CollectStatus.SUCCESS: 1})
+
+    monkeypatch.setattr(cli, "KeywordDiscoveryCollector", FakeCollector)
+
+    errors = StringIO()
+    assert (
+        cli.main(
+            ["--input", str(input_path), "--rollback-test"],
+            repo_root=tmp_path,
+            stdout=StringIO(),
+            stderr=errors,
+        )
+        == 0
+    )
+    assert errors.getvalue() == "retry message=failure [REDACTED]\n"
+    assert fake_config.db_password not in errors.getvalue()
+
+
+def test_script_entrypoint_exposes_cli_help_without_external_clients():
+    repo_root = Path(__file__).parents[1]
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        [
+            str(repo_root / ".venv" / "Scripts" / "python.exe"),
+            str(repo_root / "scripts" / "run_keyword_discovery_rank.py"),
+            "--help",
+        ],
+        cwd=repo_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    for option in (
+        "--input",
+        "--source",
+        "--device-override",
+        "--limit",
+        "--dry-run",
+        "--rollback-test",
+    ):
+        assert option in completed.stdout

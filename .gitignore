@@ -7,15 +7,26 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_tmp/
+.venv/
 
 # Node.js
 node_modules/
 
 # Generated artifacts and caches
 outputs/
+artifacts/keyword_discovery_rank/
 tmp/
 .cache/
 .tmp_*
+inputs/keyword_input.xlsx
+inputs/keyword_discovery_queries.xlsx
+inputs/keyword_discovery_smoke_one_query_limit5.xlsx
+inputs/keyword_discovery_smoke_three_queries_limit20.xlsx
+inputs/keyword_discovery_one_store_five_keywords.xlsx
+inputs/keyword_discovery_mobile_pilot_25.xlsx
+inputs/keyword_discovery_mobile_pc_comparison_20.xlsx
+*.xlsx.inspect.ndjson
 
 # Local worktrees
 .worktrees/
