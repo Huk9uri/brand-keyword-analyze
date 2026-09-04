@@ -56,6 +56,14 @@ def test_rank_source_selects_top_ten_organic_and_deduplicates_place_ids(fake_cur
     assert fake_cursor.params == (RUN_ID, 10)
 
 
+def test_rank_source_defaults_to_top_ten_when_limit_is_omitted(fake_cursor):
+    from scripts.place_keyword_collector.rank_source import RankResultSource
+
+    RankResultSource(fake_cursor).load(RUN_ID)
+
+    assert fake_cursor.params == (RUN_ID, 10)
+
+
 def test_rank_source_query_limits_successful_organic_results_and_uses_deterministic_deduplication(
     fake_cursor,
 ):

@@ -39,7 +39,7 @@ class RankResultSource:
     def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
 
-    def load(self, rank_run_id: str, top_n: int) -> tuple[RankPlaceTarget, ...]:
+    def load(self, rank_run_id: str, top_n: int = 10) -> tuple[RankPlaceTarget, ...]:
         self._cursor.execute(RANK_PLACE_TARGETS_SQL, (rank_run_id, top_n))
         return tuple(
             RankPlaceTarget(place_id=str(row[0]), place_name=str(row[1]))
