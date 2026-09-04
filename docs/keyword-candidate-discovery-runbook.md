@@ -54,6 +54,25 @@
 - `status_counts`: `READY`, `INSUFFICIENT_EVIDENCE`, `REVIEW_REQUIRED`, `EXCLUDED`별 수
 - `dry_run`: `true`
 
+## 한 매장 범위 검증
+
+`--target-place-id`를 지정하면 원문 조회부터 후보 집계와 저장까지 해당 Place ID로
+제한되고 브랜드 공통 후보는 생성하지 않는다. 운영 전체 적재 전에 한 매장의 후보
+품질을 확인할 때 사용한다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.keyword_candidate_discovery.cli `
+  --brand-code 01 `
+  --target-place-id 31076466 `
+  --as-of 2026-09-04 `
+  --menu 설렁탕 `
+  --operation-keyword 혼밥 `
+  --env-file C:\workspace\brand_analyze\.env
+```
+
+`--place-id`는 외부 후보를 연결하는 용도이고 리뷰 조회 범위를 제한하지 않는다.
+한 매장 검증에서는 `--target-place-id`를 사용한다.
+
 ## 메뉴·운영팀 키워드 결합
 
 매장 메뉴와 운영팀 키워드는 `--place-id` 대상 매장 후보로 들어간다. 브랜드 대표

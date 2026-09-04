@@ -12,7 +12,9 @@ from .review_source import prepare_reviews
 
 
 class ReviewSource(Protocol):
-    def iter_reviews(self, brand_code: str, window: AnalysisWindow): ...
+    def iter_reviews(
+        self, brand_code: str, window: AnalysisWindow, target_place_id: str | None = None
+    ): ...
 
 
 class Extractor(Protocol):
@@ -31,14 +33,20 @@ def run_discovery(
     sink: CandidateSink,
     *,
     external_keywords: Iterable[ExternalKeyword] = (),
+    target_place_id: str | None = None,
+    include_brand_candidates: bool = True,
     dry_run: bool = True,
     run_id: str | None = None,
 ) -> DiscoverySummary:
     actual_run_id = run_id or str(uuid4())
-    source_rows = tuple(source.iter_reviews(brand_code, window))
-    reviews = prepare_reviews(source_rows, window)
+    source_rows = tuple(source.iter_reviews(brand_code, window, target_place_id))
+    reviews = prepare_reviews(source_rows, window, target_place_id=target_place_id)
     terms = tuple(term for review in reviews for term in extractor.extract(review))
-    candidates = aggregate_candidates(terms, tuple(external_keywords))
+    candidates = aggregate_candidates(
+        terms,
+        tuple(external_keywords),
+        include_brand_candidates=include_brand_candidates,
+    )
     if not dry_run:
         sink.save_run(actual_run_id, terms, candidates)
     counts = Counter(candidate.candidate_status.value for candidate in candidates)

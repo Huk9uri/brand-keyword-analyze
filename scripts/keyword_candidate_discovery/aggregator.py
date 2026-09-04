@@ -15,6 +15,7 @@ def aggregate_candidates(
     *,
     store_review_threshold: int = 3,
     brand_store_threshold: int = 3,
+    include_brand_candidates: bool = True,
 ) -> tuple[KeywordCandidate, ...]:
     term_rows = tuple(terms)
     external_rows = tuple(external_keywords)
@@ -27,20 +28,21 @@ def aggregate_candidates(
         by_brand_keyword[(review.brand_code, term.normalized_keyword)].append(term)
         by_store_keyword[(review.brand_code, review.place_id, term.normalized_keyword)].append(term)
 
-    for (brand_code, keyword), brand_terms in by_brand_keyword.items():
-        brand_review_ids = _review_keys(brand_terms)
-        brand_store_count = len({term.review.place_id for term in brand_terms})
-        category = _category(brand_terms)
-        candidate = _build_review_candidate(
-            brand_code, CandidateScope.BRAND, "", keyword, category,
-            store_review_count=0,
-            brand_review_count=len(brand_review_ids),
-            brand_store_count=brand_store_count,
-            weighted_score=_weighted_score(brand_terms),
-            ready=brand_store_count >= brand_store_threshold,
-            review_required=any(term.review_required for term in brand_terms),
-        )
-        output[_key(candidate)] = candidate
+    if include_brand_candidates:
+        for (brand_code, keyword), brand_terms in by_brand_keyword.items():
+            brand_review_ids = _review_keys(brand_terms)
+            brand_store_count = len({term.review.place_id for term in brand_terms})
+            category = _category(brand_terms)
+            candidate = _build_review_candidate(
+                brand_code, CandidateScope.BRAND, "", keyword, category,
+                store_review_count=0,
+                brand_review_count=len(brand_review_ids),
+                brand_store_count=brand_store_count,
+                weighted_score=_weighted_score(brand_terms),
+                ready=brand_store_count >= brand_store_threshold,
+                review_required=any(term.review_required for term in brand_terms),
+            )
+            output[_key(candidate)] = candidate
 
     for (brand_code, place_id, keyword), store_terms in by_store_keyword.items():
         brand_terms = by_brand_keyword[(brand_code, keyword)]
@@ -58,6 +60,8 @@ def aggregate_candidates(
 
     for external in external_rows:
         scope = CandidateScope.STORE if external.place_id else CandidateScope.BRAND
+        if scope is CandidateScope.BRAND and not include_brand_candidates:
+            continue
         key = (external.brand_code, scope, external.place_id, external.normalized_keyword)
         current = output.get(key)
         if current is None:
