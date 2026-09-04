@@ -34,3 +34,37 @@ def test_does_not_emit_generic_sentiment_as_candidate():
     extractor = RuleBasedExtractor(AnalysisWindow(date(2026, 9, 4)))
 
     assert extractor.extract(_review("음식이 맛있고 직원이 친절해요")) == ()
+
+
+def test_does_not_emit_historical_uncertain_twenty_four_hour_claim():
+    extractor = RuleBasedExtractor(AnalysisWindow(date(2026, 9, 4)))
+    review = _review(
+        "영업시간은 매일 09:00 ~ 21:00입니다. "
+        "매장 간판을 보니 과거 24시간 영업한 적도 있었던 것 같았다."
+    )
+
+    keywords = {term.normalized_keyword for term in extractor.extract(review)}
+
+    assert "24시간" not in keywords
+
+
+def test_emits_twenty_four_hour_only_for_current_explicit_operation():
+    extractor = RuleBasedExtractor(AnalysisWindow(date(2026, 9, 4)))
+
+    keywords = {
+        term.normalized_keyword
+        for term in extractor.extract(_review("현재 매일 24시간 영업하는 식당이라 늦게 방문하기 좋아요"))
+    }
+
+    assert "24시간" in keywords
+
+
+def test_non_twenty_four_hour_schedule_overrides_ambiguous_claim():
+    extractor = RuleBasedExtractor(AnalysisWindow(date(2026, 9, 4)))
+
+    keywords = {
+        term.normalized_keyword
+        for term in extractor.extract(_review("24시간 영업 같지만 영업시간은 09:00~21:00입니다"))
+    }
+
+    assert "24시간" not in keywords
