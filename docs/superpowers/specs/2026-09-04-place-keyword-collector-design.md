@@ -174,12 +174,16 @@ python scripts/run_place_keyword_collector.py `
 ```text
 --top-n 10
 --refresh-policy monthly|weekly
+--include-place-id PLACE_ID
 --force-refresh
 --dry-run
 --rollback-test
 ```
 
 기본값은 `--top-n 10 --refresh-policy monthly`이다.
+`--include-place-id`는 반복 지정할 수 있으며, 지정된 경우 순위 실행의 수집 대상 중
+해당 Place ID만 남긴다. 순위 실행에 존재하지 않는 Place ID가 하나라도 있으면 입력
+오류로 종료한다. 이 옵션은 소량 검증과 특정 매장 장애 재수집에 사용한다.
 
 ## 11. 검증 기준
 
@@ -225,4 +229,3 @@ python scripts/run_place_keyword_collector.py `
 - 동일 결과 재확인 시 키워드 결과가 중복 저장되지 않음
 - 월별 기본 정책과 강제 갱신 동작 검증
 - 실행 절차와 장애 대응 runbook 제공
-
