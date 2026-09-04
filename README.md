@@ -58,3 +58,15 @@ flush합니다. `--rollback-test`는 DB 커밋을 롤백하는 동시에 각 작
 최종 `page.html`, `screenshot.png`, `snapshot-results.json`을 남겨 카드 단위
 수동 검토가 가능하게 합니다. 재시도 진단과 구조화 산출물의 구성값 비밀은
 `[REDACTED]`로 치환됩니다.
+
+## 키워드 후보 발굴
+
+`scripts.keyword_candidate_discovery`는 `naverDB`의 최근 12개월 블로그·방문자
+원문 리뷰에서 메뉴, 식사 상황, 방문 목적 및 이용 특성 표현을 추출합니다. 리뷰
+후보와 메뉴·운영팀·검색광고 연관어를 통합한 뒤 매장별 후보와 브랜드 공통 후보를
+분리해 생성합니다. 후보 생성은 기존 검색량 산출기 및 순위 수집기와 독립적으로
+실행됩니다.
+
+DDL, dry-run 및 실제 적재 순서는
+[`docs/keyword-candidate-discovery-runbook.md`](docs/keyword-candidate-discovery-runbook.md)를
+따릅니다.
