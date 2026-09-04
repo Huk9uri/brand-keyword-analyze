@@ -52,3 +52,15 @@ def test_analysis_window_assigns_recency_weights():
     assert window.weight_for(date(2025, 11, 4)) == 0.5
     assert window.includes(date(2025, 9, 4))
     assert not window.includes(date(2025, 9, 3))
+
+
+def test_prepare_reviews_can_limit_rows_to_one_target_place():
+    window = AnalysisWindow(as_of=date(2026, 9, 4), months=12)
+    rows = [
+        _row("VISITOR", 1, "01", "target", date(2026, 8, 1), "혼밥하기 좋아요"),
+        _row("VISITOR", 2, "01", "other", date(2026, 8, 1), "혼밥하기 좋아요"),
+    ]
+
+    reviews = prepare_reviews(rows, window, target_place_id="target")
+
+    assert [review.place_id for review in reviews] == ["target"]

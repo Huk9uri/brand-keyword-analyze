@@ -27,6 +27,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="네이버 원문 리뷰 기반 키워드 후보 발굴")
     parser.add_argument("--brand-code", required=True)
     parser.add_argument("--place-id", default="")
+    parser.add_argument("--target-place-id", default="")
     parser.add_argument("--as-of", required=True, type=_date)
     parser.add_argument("--months", type=int, default=12)
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
@@ -65,7 +66,10 @@ def main(argv=None) -> int:
         window = AnalysisWindow(args.as_of, args.months)
         summary = run_discovery(
             brand_code, window, ReviewRepository(connection), RuleBasedExtractor(window),
-            CandidateRepository(connection), external_keywords=external, dry_run=args.dry_run,
+            CandidateRepository(connection), external_keywords=external,
+            target_place_id=args.target_place_id or None,
+            include_brand_candidates=not bool(args.target_place_id),
+            dry_run=args.dry_run,
         )
         print(json.dumps(summary.__dict__, ensure_ascii=False, default=str, sort_keys=True))
         return 0
@@ -75,11 +79,12 @@ def main(argv=None) -> int:
 
 def _external_keywords(args, brand_code: str, values: dict[str, str]) -> tuple[ExternalKeyword, ...]:
     rows: list[ExternalKeyword] = []
-    rows.extend(ExternalKeyword(brand_code, keyword.strip(), TermCategory.MENU, args.place_id, from_menu=True)
+    store_place_id = args.target_place_id or args.place_id
+    rows.extend(ExternalKeyword(brand_code, keyword.strip(), TermCategory.MENU, store_place_id, from_menu=True)
                 for keyword in args.menu if keyword.strip())
     rows.extend(ExternalKeyword(brand_code, keyword.strip(), TermCategory.MENU, "", from_brand_menu=True)
                 for keyword in args.brand_menu if keyword.strip())
-    rows.extend(ExternalKeyword(brand_code, keyword.strip(), TermCategory.UNKNOWN, args.place_id,
+    rows.extend(ExternalKeyword(brand_code, keyword.strip(), TermCategory.UNKNOWN, store_place_id,
                                 from_operation_keyword=True)
                 for keyword in args.operation_keyword if keyword.strip())
     if args.expand_searchad:
@@ -89,7 +94,7 @@ def _external_keywords(args, brand_code: str, values: dict[str, str]) -> tuple[E
             raise SystemExit("missing SearchAd environment keys: " + ", ".join(missing))
         seeds = tuple(dict.fromkeys([*args.menu, *args.brand_menu, *args.operation_keyword]))
         client = SearchAdRelatedClient(*(values[key] for key in keys))
-        rows.extend(ExternalKeyword(brand_code, keyword, TermCategory.UNKNOWN, args.place_id,
+        rows.extend(ExternalKeyword(brand_code, keyword, TermCategory.UNKNOWN, store_place_id,
                                     from_searchad_related=True)
                     for keyword in client.fetch_related(seeds))
     return tuple(rows)

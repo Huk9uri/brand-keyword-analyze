@@ -16,3 +16,12 @@ def test_cli_requires_explicit_write_flag_for_persistence():
     args = parse_args(["--brand-code", "1", "--as-of", "2026-09-04", "--write"])
 
     assert not args.dry_run
+
+
+def test_cli_accepts_target_place_scope():
+    args = parse_args([
+        "--brand-code", "1", "--as-of", "2026-09-04",
+        "--target-place-id", "31076466",
+    ])
+
+    assert args.target_place_id == "31076466"

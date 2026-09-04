@@ -6,7 +6,7 @@ from scripts.keyword_candidate_discovery.pipeline import run_discovery
 
 
 class Source:
-    def iter_reviews(self, brand_code, window):
+    def iter_reviews(self, brand_code, window, target_place_id=None):
         return tuple({
             "source_type": "VISITOR", "source_review_id": index, "brand_code": brand_code,
             "place_id": "p1", "place_name": "매장", "review_date": date(2026, 8, index),
@@ -43,3 +43,18 @@ def test_live_run_persists_one_run():
 
     assert not summary.dry_run
     assert len(sink.calls) == 1
+
+
+def test_target_place_run_only_builds_store_candidates_for_that_place():
+    window = AnalysisWindow(date(2026, 9, 4))
+    sink = Sink()
+
+    run_discovery(
+        "1", window, Source(), RuleBasedExtractor(window), sink,
+        target_place_id="p1", include_brand_candidates=False, dry_run=False,
+    )
+
+    candidates = sink.calls[0][2]
+    assert candidates
+    assert all(candidate.place_id == "p1" for candidate in candidates)
+    assert all(candidate.candidate_scope.value == "STORE" for candidate in candidates)

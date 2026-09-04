@@ -45,3 +45,12 @@ def test_non_visit_intent_is_excluded_even_when_repeated():
     candidates = aggregate_candidates(terms, ())
 
     assert all(item.candidate_status is CandidateStatus.EXCLUDED for item in candidates)
+
+
+def test_store_only_mode_omits_brand_candidates():
+    terms = tuple(_term(index, "p1") for index in range(1, 4))
+
+    candidates = aggregate_candidates(terms, (), include_brand_candidates=False)
+
+    assert candidates
+    assert all(item.candidate_scope is CandidateScope.STORE for item in candidates)
