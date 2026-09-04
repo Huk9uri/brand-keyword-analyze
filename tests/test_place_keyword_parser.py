@@ -96,6 +96,20 @@ def test_parser_decodes_quote_entities_only_when_needed_for_json_structure():
     assert parsed.keywords[0].raw_keyword == "R&amp;D"
 
 
+def test_parser_finds_entity_encoded_target_after_unrelated_raw_mapping():
+    html = """
+    <script>
+      window.unrelated = {"id":"99999999","keywordList":["wrong"]};
+      window.target = {&quot;id&quot;:&quot;13149768&quot;,
+      &quot;keywordList&quot;:[&quot;R&amp;D&quot;,&quot;순대&quot;]};
+    </script>
+    """
+
+    parsed = KeywordListParser().parse(html, "13149768")
+
+    assert [item.raw_keyword for item in parsed.keywords] == ["R&amp;D", "순대"]
+
+
 def test_parser_accepts_at_most_four_serialized_string_layers():
     payload = {"place": {"id": "13149768", "keywordList": ["순대"]}}
 

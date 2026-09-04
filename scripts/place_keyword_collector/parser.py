@@ -81,12 +81,16 @@ def _mappings_from_text(text: str, depth: int) -> Iterator[Mapping[str, Any]]:
     ]
     if mappings:
         yield from mappings
-        return
 
+    emitted = list(mappings)
     structural_candidate = _decode_structural_quote_entities(text)
     if structural_candidate != text:
         for value in _json_values(structural_candidate):
-            yield from _walk_structures(value, depth)
+            for mapping in _walk_structures(value, depth):
+                if mapping in emitted:
+                    continue
+                emitted.append(mapping)
+                yield mapping
 
 
 def _walk_structures(value: Any, depth: int = 0) -> Iterator[Mapping[str, Any]]:
