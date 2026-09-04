@@ -272,22 +272,22 @@ BEGIN
         N''
     );
 
-    SELECT @canonical_status_remainder = REPLACE(
-        @canonical_status_remainder,
-        N'''' + LOWER(expected_status.status_value) + N'''',
-        N''
-    )
-    FROM @expected_status_values AS expected_status;
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'''success''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'''empty''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'''blocked''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'''load_timeout''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'''place_mismatch''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'''parse_error''', N'');
 END;
 
 IF @actual_status_constraint_form = N'OR'
 BEGIN
-    SELECT @canonical_status_remainder = REPLACE(
-        @canonical_status_remainder,
-        expected_status.normalized_or_term,
-        N''
-    )
-    FROM @expected_status_terms AS expected_status;
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'collect_status=''success''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'collect_status=''empty''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'collect_status=''blocked''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'collect_status=''load_timeout''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'collect_status=''place_mismatch''', N'');
+    SET @canonical_status_remainder = REPLACE(@canonical_status_remainder, N'collect_status=''parse_error''', N'');
 END;
 
 IF @actual_status_definition IS NULL

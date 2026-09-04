@@ -246,6 +246,26 @@ def test_verify_sql_validates_status_operator_column_and_canonical_terms():
     assert re.search(r"replicate\(\s*n','", sql)
 
 
+def test_verify_sql_removes_status_tokens_without_recursive_select_assignment():
+    sql = VERIFY_SQL.read_text(encoding="utf-8")
+
+    assert not re.search(
+        r"select\s+@canonical_status_remainder\s*=",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    assert len(
+        re.findall(
+            r"set\s+@canonical_status_remainder\s*=\s*replace\s*\(",
+            sql,
+            flags=re.IGNORECASE,
+        )
+    ) == 12
+    for status in ALLOWED_STATUS_VALUES:
+        assert f"n'''{status}'''" in sql.casefold()
+        assert f"n'collect_status=''{status}'''" in sql.casefold()
+
+
 def test_verify_sql_requires_constraints_and_indexes_to_be_enabled_and_trusted():
     sql = _normalized(VERIFY_SQL)
 
