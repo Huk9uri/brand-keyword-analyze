@@ -85,27 +85,24 @@ def is_place_page_ready(source: str, requested_place_id: str) -> bool:
         return False
 
     for candidate in _source_candidates(source or ""):
-        match = _target_id_match(candidate, place_id)
-        if match is None:
-            continue
-        if re.search(r'["\']keywordList["\']\s*:', candidate):
-            return True
-
-        object_start = candidate.rfind("{", 0, match.start())
-        object_end = candidate.find("}", match.end())
-        if object_start < 0 or object_end < 0:
-            continue
-        target_object = candidate[object_start : object_end + 1]
-        if any(
-            re.search(rf'["\']{re.escape(key)}["\']\s*:', target_object)
-            for key in _DEFINITIVE_TARGET_KEYS
-        ):
-            return True
-        if (
-            re.search(r'["\']x["\']\s*:', target_object)
-            and re.search(r'["\']y["\']\s*:', target_object)
-        ):
-            return True
+        for match in _target_id_matches(candidate, place_id):
+            object_start = candidate.rfind("{", 0, match.start())
+            object_end = candidate.find("}", match.end())
+            if object_start < 0 or object_end < 0:
+                continue
+            target_object = candidate[object_start : object_end + 1]
+            if re.search(r'["\']keywordList["\']\s*:', target_object):
+                return True
+            if any(
+                re.search(rf'["\']{re.escape(key)}["\']\s*:', target_object)
+                for key in _DEFINITIVE_TARGET_KEYS
+            ):
+                return True
+            if (
+                re.search(r'["\']x["\']\s*:', target_object)
+                and re.search(r'["\']y["\']\s*:', target_object)
+            ):
+                return True
     return False
 
 
@@ -143,30 +140,28 @@ class PlacePageBrowser:
         try:
             self.driver.set_page_load_timeout(self.timeout_seconds)
             self.driver.get(target_url)
-        except TimeoutException as exc:
+        except TimeoutException:
             self._capture_best_effort()
-            raise self._timeout("Place navigation exceeded the collection deadline") from exc
-        except Exception as exc:
+            raise self._timeout("Place navigation exceeded the collection deadline") from None
+        except Exception:
             self._capture_best_effort()
-            raise self._error("Place navigation failed") from exc
+            raise self._error("Place navigation failed") from None
 
         self._capture_or_raise()
-        if self._monotonic() >= deadline:
-            raise self._timeout("Place navigation exceeded the collection deadline")
-
         while True:
-            if self._monotonic() >= deadline:
-                raise self._timeout("Place page did not become ready before the collection deadline")
             if is_blocked_page(self._last_html):
                 raise BlockedPageError(
                     "Naver returned an access-restriction page",
                     last_url=self._last_url,
                     html=self._last_html,
                 )
-            if is_place_page_ready(self._last_html, place_id):
-                return PlacePage(final_url=self._last_url, html=self._last_html)
 
+            ready = is_place_page_ready(self._last_html, place_id)
             remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                raise self._timeout("Place page did not become ready before the collection deadline")
+            if ready:
+                return PlacePage(final_url=self._last_url, html=self._last_html)
             self._sleep(min(self.poll_interval, remaining))
             self._capture_or_raise()
 
@@ -181,16 +176,16 @@ class PlacePageBrowser:
 
         try:
             directory.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise self._error("Could not create the evidence directory") from exc
+        except OSError:
+            raise self._error("Could not create the evidence directory") from None
         try:
             html_path.write_text(html, encoding="utf-8")
-        except OSError as exc:
-            raise self._error("Could not write HTML evidence") from exc
+        except OSError:
+            raise self._error("Could not write HTML evidence") from None
         try:
             saved = self.driver.save_screenshot(str(screenshot_path))
-        except Exception as exc:
-            raise self._error("Could not save screenshot evidence") from exc
+        except Exception:
+            raise self._error("Could not save screenshot evidence") from None
         if saved is False:
             raise self._error("WebDriver declined to save screenshot evidence")
         return html_path, screenshot_path
@@ -200,17 +195,17 @@ class PlacePageBrowser:
 
         try:
             self.driver.quit()
-        except Exception as exc:
+        except Exception:
             self._capture_best_effort()
-            raise self._error("Could not close the Place browser") from exc
+            raise self._error("Could not close the Place browser") from None
 
     def _capture_or_raise(self) -> None:
         try:
             current_url = self.driver.current_url
             source = self.driver.page_source
-        except Exception as exc:
+        except Exception:
             self._capture_best_effort()
-            raise self._error("Could not inspect the Place browser state") from exc
+            raise self._error("Could not inspect the Place browser state") from None
         self._last_url = current_url or ""
         self._last_html = source or ""
 
@@ -263,12 +258,12 @@ class BrowserFactory:
         try:
             driver = self._driver_builder(options=options)
             driver.set_window_size(390, 844)
-        except Exception as exc:
+        except Exception:
             raise PlaceBrowserError(
                 "Could not create the Place browser session",
                 last_url="",
                 html="",
-            ) from exc
+            ) from None
         return PlacePageBrowser(
             driver,
             timeout_seconds=self.timeout_seconds,
@@ -282,13 +277,13 @@ def _source_candidates(source: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys((source, decoded_entities, decoded_quotes)))
 
 
-def _target_id_match(source: str, place_id: str) -> re.Match[str] | None:
+def _target_id_matches(source: str, place_id: str) -> tuple[re.Match[str], ...]:
     escaped_id = re.escape(place_id)
     pattern = re.compile(
         rf'["\'](?:id|placeId|place_id)["\']\s*:\s*'
         rf'(?:["\']{escaped_id}["\']|{escaped_id})(?=\s*[,}}])'
     )
-    return pattern.search(source)
+    return tuple(pattern.finditer(source))
 
 
 # Descriptive alias for callers that have both search and Place browser factories.

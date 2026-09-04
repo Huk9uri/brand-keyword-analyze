@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 from typing import Callable
 
 import pytest
 from selenium.common.exceptions import TimeoutException
 
+import scripts.place_keyword_collector.browser as browser_module
 from scripts.place_keyword_collector.browser import (
     MOBILE_USER_AGENT,
     BlockedPageError,
@@ -154,6 +156,17 @@ def test_browser_polls_until_definitive_target_object_is_available():
     assert clock.sleeps == [1]
 
 
+def test_browser_checks_later_target_object_after_early_sparse_id_reference():
+    html = (
+        '<html><script>{"references":[{"id":"13149768"}],'
+        '"restaurant":{"id":"13149768","name":"농민백암순대 본점"}}</script></html>'
+    )
+
+    page = browser(FakeDriver(pages=(html,))).fetch(target())
+
+    assert page.html == html
+
+
 def test_browser_requires_exact_requested_place_id_before_ready():
     driver = FakeDriver(
         pages=(
@@ -196,6 +209,20 @@ def test_navigation_that_returns_after_deadline_is_timeout_even_if_page_is_ready
     assert raised.value.html == READY_HTML
 
 
+def test_blocked_navigation_has_priority_when_navigation_reaches_deadline():
+    clock = FakeClock()
+    blocked = fixture("blocked.html")
+    driver = FakeDriver(
+        pages=(blocked,),
+        on_get=lambda: setattr(clock, "now", 3),
+    )
+
+    with pytest.raises(BlockedPageError) as raised:
+        browser(driver, clock, timeout_seconds=3).fetch(target())
+
+    assert raised.value.html == blocked
+
+
 def test_page_that_becomes_ready_at_deadline_is_still_timeout():
     clock = FakeClock()
     driver = FakeDriver(pages=("<html>loading</html>", READY_HTML))
@@ -205,6 +232,47 @@ def test_page_that_becomes_ready_at_deadline_is_still_timeout():
 
     assert raised.value.html == READY_HTML
     assert clock.now == 1
+
+
+def test_blocked_poll_has_priority_when_it_appears_at_deadline():
+    clock = FakeClock()
+    blocked = fixture("blocked.html")
+    driver = FakeDriver(pages=("<html>loading</html>", blocked))
+
+    with pytest.raises(BlockedPageError) as raised:
+        browser(driver, clock, timeout_seconds=1).fetch(target())
+
+    assert raised.value.html == blocked
+    assert clock.now == 1
+
+
+def test_scan_that_crosses_deadline_times_out_without_nonpositive_sleep(monkeypatch):
+    clock = FakeClock()
+    real_readiness_scan = browser_module.is_place_page_ready
+
+    def slow_readiness_scan(source: str, requested_place_id: str) -> bool:
+        ready = real_readiness_scan(source, requested_place_id)
+        clock.now = 1.1
+        return ready
+
+    def reject_nonpositive_sleep(seconds: float) -> None:
+        if seconds <= 0:
+            raise AssertionError(f"nonpositive sleep: {seconds}")
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(browser_module, "is_place_page_ready", slow_readiness_scan)
+    instance = PlacePageBrowser(
+        FakeDriver(pages=("<html>loading</html>",)),
+        timeout_seconds=1,
+        poll_interval=1,
+        monotonic=clock.monotonic,
+        sleep=reject_nonpositive_sleep,
+    )
+
+    with pytest.raises(PlaceLoadTimeout):
+        instance.fetch(target())
+
+    assert clock.sleeps == []
 
 
 def test_selenium_navigation_timeout_preserves_best_available_state():
@@ -234,6 +302,27 @@ def test_generic_driver_failure_is_typed_and_does_not_echo_credentials():
     assert "hunter2" not in str(raised.value)
     assert hasattr(raised.value, "last_url")
     assert hasattr(raised.value, "html")
+
+
+def test_sanitized_browser_error_traceback_does_not_retain_sensitive_cause():
+    secret = "password=traceback-secret"
+
+    class FailedDriver(FakeDriver):
+        def get(self, url: str) -> None:
+            raise RuntimeError(secret)
+
+    with pytest.raises(PlaceBrowserError) as raised:
+        browser(FailedDriver()).fetch(target())
+
+    rendered = "".join(
+        traceback.format_exception(
+            raised.type,
+            raised.value,
+            raised.value.__traceback__,
+        )
+    )
+    assert secret not in rendered
+    assert raised.value.__cause__ is None
 
 
 def test_save_evidence_writes_supplied_html_and_screenshot(tmp_path: Path):
