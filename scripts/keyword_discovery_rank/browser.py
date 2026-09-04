@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -125,6 +126,7 @@ class BrowserSession:
         poll_interval: float = 0.25,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        location_override_active: bool = False,
     ) -> None:
         self.driver = driver
         self.timeout_seconds = timeout_seconds
@@ -132,6 +134,7 @@ class BrowserSession:
         self.poll_interval = poll_interval
         self._monotonic = monotonic
         self._sleep = sleep
+        self.location_override_active = location_override_active
         self._last_url = ""
         self._last_html = ""
 
@@ -159,14 +162,29 @@ class BrowserSession:
                 html=self._last_html,
             )
 
-        self._activate_current_location_if_needed()
-
         last_state = "LOADING"
         more_control_clicked = False
+        location_activated = not (
+            self.location_override_active and _query_requires_location_activation(task)
+        )
         stable_signature: int | None = None
         stable_polls = 0
         while True:
             self._capture()
+            if not location_activated:
+                if self._activate_current_location_if_needed():
+                    location_activated = True
+                    stable_signature = None
+                    stable_polls = 0
+                if not location_activated:
+                    if self._monotonic() >= deadline:
+                        raise SearchStateTimeout(
+                            "current-location control did not become available before timeout",
+                            last_url=self._last_url,
+                            html=self._last_html,
+                        )
+                    self._sleep(self.poll_interval)
+                    continue
             last_state = detect_page_state(self._last_url, self._last_html, task.query)
             observed_count, end_reached = _result_progress(self._last_html)
             signature = observed_count
@@ -284,14 +302,13 @@ class BrowserSession:
             for element in self.driver.find_elements(By.XPATH, MORE_RESULTS_XPATH)
         )
 
-    def _activate_current_location_if_needed(self) -> None:
-        if LOCATION_UNAVAILABLE_TEXT not in self._last_html:
-            return
+    def _activate_current_location_if_needed(self) -> bool:
         for element in self.driver.find_elements(By.ID, "_my_location"):
             if element.is_displayed() and element.is_enabled():
                 element.click()
                 self._sleep(self.poll_interval)
-                return
+                return True
+        return False
 
     def _capture_best_effort(self) -> None:
         self._capture_url_best_effort()
@@ -375,7 +392,15 @@ class BrowserFactory:
             timeout_seconds=self.timeout_seconds,
             result_limit=self.result_limit,
             poll_interval=self.poll_interval,
+            location_override_active=latitude is not None and longitude is not None,
         )
+
+
+def _query_requires_location_activation(task: SearchTask) -> bool:
+    query = re.sub(r"\s+", "", task.query).casefold()
+    location = re.sub(r"\s+", "", task.location_name).casefold()
+    location = re.sub(r"(?:역)?점$", "", location)
+    return bool(location) and location not in query
 
 
 def _normalize_query(value: str) -> str:
