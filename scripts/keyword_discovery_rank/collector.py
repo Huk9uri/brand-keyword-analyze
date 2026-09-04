@@ -274,14 +274,14 @@ class KeywordDiscoveryCollector:
         return replace(final_attempt, retry_history=tuple(retry_history))
 
     def _ensure_session(self, task: SearchTask) -> Any:
-        profile = task.device_type
+        profile = (task.device_type, task.latitude, task.longitude)
         if self._session is not None and self._session_profile != profile:
             self._discard_session()
         if self._session is None:
             self._session = self.browser_factory.create(
                 task.device_type,
-                None,
-                None,
+                task.latitude,
+                task.longitude,
             )
             self._session_profile = profile
         return self._session

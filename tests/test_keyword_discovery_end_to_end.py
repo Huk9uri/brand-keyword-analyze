@@ -121,7 +121,7 @@ def test_fixture_workbook_flows_through_collection_pipeline_once_and_persists_or
     assert summary.processed_tasks == 1
     assert summary.status_counts == {CollectStatus.SUCCESS: 1}
     assert len(factory.create_calls) == 1
-    assert factory.create_calls == [(DeviceType.MOBILE, None, None)]
+    assert factory.create_calls == [(DeviceType.MOBILE, 37.5048, 127.0489)]
     assert len(session.search_tasks) == 1
     assert session.closed is True
     assert len(repository.saved) == 1

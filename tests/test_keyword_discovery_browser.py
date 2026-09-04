@@ -246,6 +246,7 @@ def make_session(
     timeout_seconds: float = 2,
     result_limit: int = 20,
     clock: ManualClock | None = None,
+    location_override_active: bool = False,
 ):
     clock = clock or ManualClock()
     return BrowserSession(
@@ -255,6 +256,7 @@ def make_session(
         poll_interval=1,
         monotonic=clock.monotonic,
         sleep=clock.sleep,
+        location_override_active=location_override_active,
     )
 
 
@@ -302,13 +304,52 @@ def test_search_activates_current_location_before_accepting_results():
             return []
 
     driver = LocationDriver()
-    page = make_session(driver, result_limit=5).search(
+    page = make_session(driver, result_limit=5, location_override_active=True).search(
         SearchTask("location", "국밥", "S1", "매장", "위치", 37.5, 127.0, SourceType.EXCEL, "1")
     )
 
     assert driver.location_clicks == 1
     assert "위치 정보 없음" not in page.html
     assert page.observed_result_count == 5
+
+
+def test_search_waits_for_delayed_current_location_button_before_accepting_results():
+    url = "https://m.search.naver.com/search.naver?query=%EA%B5%AD%EB%B0%A5"
+
+    class DelayedLocationDriver(FakeDriver):
+        def __init__(self):
+            super().__init__([(url, result_html(20))])
+            self.location_checks = 0
+            self.location_clicks = 0
+
+        def find_elements(self, by: str, value: str):
+            self.find_element_calls.append((by, value))
+            if by == By.ID and value == "_my_location":
+                self.location_checks += 1
+                if self.location_checks >= 2:
+                    driver = self
+
+                    class LocationButton:
+                        def is_displayed(self):
+                            return True
+
+                        def is_enabled(self):
+                            return True
+
+                        def click(self):
+                            driver.location_clicks += 1
+
+                    return [LocationButton()]
+            return []
+
+    driver = DelayedLocationDriver()
+
+    make_session(driver, location_override_active=True).search(
+        SearchTask("location", "국밥", "S1", "매장", "선릉점", 37.5, 127.0, SourceType.EXCEL, "1")
+    )
+
+    assert driver.location_checks >= 2
+    assert driver.location_clicks == 1
 
 
 def test_search_deadline_covers_navigation_even_if_driver_returns_late():

@@ -122,16 +122,32 @@ def main(
         repository = SnapshotRepository(repository_connection)
         repository.preflight(expected_database="naverDB")
 
-        browser_factory = _make_browser_factory(collector_config)
+        location_repository = PlaceLocationRepository(repository_connection)
+        location_repository.preflight(expected_database="naverDB")
         run_id = str(uuid_factory())
         stdout.write(f"run_id={run_id}\n")
         stdout.flush()
 
+        resolver = PlaceLocationResolver(
+            location_repository,
+            PlacePageClient(timeout_seconds=collector_config.timeout_seconds),
+        )
+        tasks, location_failures, location_persistence_failures = _resolve_task_locations(
+            tasks,
+            loaded_input.own_stores,
+            resolver,
+            repository,
+            run_id,
+            collector_config.result_limit,
+        )
+
+        browser_factory = _make_browser_factory(collector_config)
+
         if tasks:
             preflight_session = browser_factory.create(
                 tasks[0].device_type,
-                None,
-                None,
+                tasks[0].latitude,
+                tasks[0].longitude,
             )
             _close_browser_session(preflight_session)
 
@@ -158,6 +174,11 @@ def main(
             summary = collector.run(tasks, run_id)
         else:
             summary = RunSummary(run_id, 0, 0, {})
+        summary = _merge_location_failures(
+            summary,
+            location_failures,
+            location_persistence_failures,
+        )
         _print_summary(summary, stdout)
         return 1 if summary.aborted or summary.persistence_failures else 0
     except (CliError, ConfigError, InputValidationError, RepositoryError, BrowserSessionError, OSError) as exc:

@@ -266,7 +266,7 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
     monkeypatch: pytest.MonkeyPatch,
 ):
     events = []
-    source_task = sample_task()
+    source_task = SearchTask(**{**sample_task().__dict__, "latitude": None, "longitude": None})
     fake_config = config(tmp_path)
 
     monkeypatch.setattr(
@@ -309,6 +309,25 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
 
     monkeypatch.setattr(cli, "SnapshotRepository", FakeRepository)
 
+    class FakeLocationRepository:
+        def __init__(self, received_connection):
+            assert received_connection is connection
+            events.append("location-repository")
+
+        def preflight(self, *, expected_database):
+            assert expected_database == "naverDB"
+            events.append("location-preflight")
+
+        def get(self, place_id):
+            assert place_id == "1001"
+            events.append("location-cache-get")
+            return PlaceLocation.create(place_id, 37.5042, 127.0531)
+
+        def upsert(self, location):
+            raise AssertionError("cached location must not be written again")
+
+    monkeypatch.setattr(cli, "PlaceLocationRepository", FakeLocationRepository)
+
     class FakeDriver:
         def quit(self):
             events.append("preflight-browser-close")
@@ -318,7 +337,7 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
 
     class FakeBrowserFactory:
         def create(self, device_type, latitude, longitude):
-            assert (device_type, latitude, longitude) == (DeviceType.PC, None, None)
+            assert (device_type, latitude, longitude) == (DeviceType.PC, 37.5042, 127.0531)
             events.append("chrome-preflight")
             return PreflightSession()
 
@@ -349,6 +368,7 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
         def run(self, tasks, run_id):
             tasks = list(tasks)
             assert tasks[0].device_type is DeviceType.PC
+            assert (tasks[0].latitude, tasks[0].longitude) == (37.5042, 127.0531)
             assert run_id == str(RUN_ID)
             assert output.getvalue() == f"run_id={RUN_ID}\n"
             assert output.flush_calls == 1
@@ -392,6 +412,9 @@ def test_live_mode_runs_input_db_and_chrome_preflight_before_collection_and_clos
         "db-connect",
         "repository",
         "db-preflight",
+        "location-repository",
+        "location-preflight",
+        "location-cache-get",
         "browser-factory",
         "chrome-preflight",
         "preflight-browser-close",
@@ -534,6 +557,15 @@ def test_real_cli_input_wires_authoritative_workbook_identity_into_matcher(
             pass
 
     monkeypatch.setattr(cli, "SnapshotRepository", FakeRepository)
+
+    class FakeLocationRepository:
+        def __init__(self, received_connection):
+            assert received_connection._connection is connection
+
+        def preflight(self, *, expected_database):
+            assert expected_database == "naverDB"
+
+    monkeypatch.setattr(cli, "PlaceLocationRepository", FakeLocationRepository)
 
     class FakeSession:
         def close(self):

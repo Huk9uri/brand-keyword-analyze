@@ -232,7 +232,7 @@ def test_immediate_success_persists_matched_final_result_and_closes_browser(tmp_
     assert results[0].matched_store_id == "S1"
     assert results[0].is_target_store is True
     assert len(factory.create_calls) == 1
-    assert factory.create_calls == [(DeviceType.MOBILE, None, None)]
+    assert factory.create_calls == [(DeviceType.MOBILE, 37.5048, 127.0489)]
     assert session.driver.quit_calls == 1
 
 
