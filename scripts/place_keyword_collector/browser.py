@@ -142,6 +142,12 @@ class PlacePageBrowser:
             self.driver.get(target_url)
         except TimeoutException:
             self._capture_best_effort()
+            if is_blocked_page(self._last_html):
+                raise BlockedPageError(
+                    "Naver returned an access-restriction page",
+                    last_url=self._last_url,
+                    html=self._last_html,
+                ) from None
             raise self._timeout("Place navigation exceeded the collection deadline") from None
         except Exception:
             self._capture_best_effort()

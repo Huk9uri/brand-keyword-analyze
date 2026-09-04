@@ -291,6 +291,23 @@ def test_selenium_navigation_timeout_preserves_best_available_state():
     assert "do-not-copy" not in str(raised.value)
 
 
+def test_selenium_navigation_timeout_prioritizes_captured_blocked_page():
+    class TimedOutBlockedDriver(FakeDriver):
+        def get(self, url: str) -> None:
+            self.requested_url = url
+            raise TimeoutException("navigation timed out")
+
+    html = fixture("blocked.html")
+    driver = TimedOutBlockedDriver(pages=(html,))
+
+    with pytest.raises(BlockedPageError) as raised:
+        browser(driver).fetch(target())
+
+    assert type(raised.value) is BlockedPageError
+    assert raised.value.last_url == driver.url
+    assert raised.value.html == html
+
+
 def test_generic_driver_failure_is_typed_and_does_not_echo_credentials():
     class FailedDriver(FakeDriver):
         def get(self, url: str) -> None:
