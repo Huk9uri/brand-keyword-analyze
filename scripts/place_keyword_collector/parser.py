@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html as html_module
 import json
 import unicodedata
 from collections.abc import Iterator, Mapping
@@ -67,6 +66,29 @@ def _json_values(text: str) -> Iterator[Any]:
         index = max(end, index + 1)
 
 
+def _decode_structural_quote_entities(text: str) -> str:
+    decoded = text
+    for entity in ("&quot;", "&#34;", "&#x22;", "&#X22;"):
+        decoded = decoded.replace(entity, '"')
+    return decoded
+
+
+def _mappings_from_text(text: str, depth: int) -> Iterator[Mapping[str, Any]]:
+    mappings = [
+        mapping
+        for value in _json_values(text)
+        for mapping in _walk_structures(value, depth)
+    ]
+    if mappings:
+        yield from mappings
+        return
+
+    structural_candidate = _decode_structural_quote_entities(text)
+    if structural_candidate != text:
+        for value in _json_values(structural_candidate):
+            yield from _walk_structures(value, depth)
+
+
 def _walk_structures(value: Any, depth: int = 0) -> Iterator[Mapping[str, Any]]:
     if isinstance(value, Mapping):
         yield value
@@ -78,10 +100,7 @@ def _walk_structures(value: Any, depth: int = 0) -> Iterator[Mapping[str, Any]]:
             yield from _walk_structures(child, depth)
         return
     if isinstance(value, str) and depth < _MAX_SERIALIZED_DEPTH:
-        decoded = html_module.unescape(value)
-        for child in _json_values(decoded):
-            if child != value:
-                yield from _walk_structures(child, depth + 1)
+        yield from _mappings_from_text(value, depth + 1)
 
 
 def _keyword_rows(values: list[Any]) -> tuple[CollectedKeyword, ...]:
@@ -114,18 +133,16 @@ class KeywordListParser:
         matching_object_found = False
         matching_arrays: list[list[Any]] = []
         for script in collector.scripts:
-            payload = html_module.unescape(script)
-            for value in _json_values(payload):
-                for mapping in _walk_structures(value):
-                    if "keywordList" not in mapping:
-                        continue
-                    candidate_found = True
-                    if str(mapping.get("id")) != str(expected_place_id):
-                        continue
-                    matching_object_found = True
-                    keyword_list = mapping["keywordList"]
-                    if isinstance(keyword_list, list):
-                        matching_arrays.append(keyword_list)
+            for mapping in _mappings_from_text(script, depth=0):
+                if "keywordList" not in mapping:
+                    continue
+                candidate_found = True
+                if str(mapping.get("id")) != str(expected_place_id):
+                    continue
+                matching_object_found = True
+                keyword_list = mapping["keywordList"]
+                if isinstance(keyword_list, list):
+                    matching_arrays.append(keyword_list)
 
         if not matching_arrays:
             if matching_object_found:
