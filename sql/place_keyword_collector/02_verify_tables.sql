@@ -43,7 +43,7 @@ VALUES
     (N'naver_place_keyword_snapshot', N'keyword_count', N'smallint', 2, 5, 0, 0, 0),
     (N'naver_place_keyword_snapshot', N'parser_version', N'varchar', 30, 0, 0, 0, 0),
     (N'naver_place_keyword_snapshot', N'collect_msg', N'nvarchar', 2000, 0, 0, 1, 0),
-    (N'naver_place_keyword_snapshot', N'checked_at', N'datetime2', 7, 19, 3, 0, 0),
+    (N'naver_place_keyword_snapshot', N'checked_at', N'datetime2', 7, 23, 3, 0, 0),
     (N'naver_place_keyword_result', N'snapshot_id', N'bigint', 8, 19, 0, 0, 0),
     (N'naver_place_keyword_result', N'keyword_order', N'smallint', 2, 5, 0, 0, 0),
     (N'naver_place_keyword_result', N'raw_keyword', N'nvarchar', 510, 0, 0, 0, 0),
@@ -179,6 +179,8 @@ IF EXISTS (
        OR ISNULL(referenced_tables.name COLLATE DATABASE_DEFAULT, N'') <> expected.referenced_table_name
        OR ISNULL(actual_parent.parent_columns COLLATE DATABASE_DEFAULT, N'') <> expected.parent_columns
        OR ISNULL(actual_referenced.referenced_columns COLLATE DATABASE_DEFAULT, N'') <> expected.referenced_columns
+       OR foreign_keys.is_disabled <> 0
+       OR foreign_keys.is_not_trusted <> 0
 )
     THROW 51005, 'Place keyword foreign key definition mismatch.', 1;
 
@@ -204,10 +206,55 @@ DECLARE @expected_checks TABLE (
 
 INSERT INTO @expected_checks (table_name, constraint_name, normalized_definition)
 VALUES
-    (N'naver_place_keyword_snapshot', N'CK_naver_place_keyword_snapshot_status', N'collect_statusin(''success'',''empty'',''blocked'',''load_timeout'',''place_mismatch'',''parse_error'')'),
-    (N'naver_place_keyword_snapshot', N'CK_naver_place_keyword_snapshot_status', N'collect_status=''success''orcollect_status=''empty''orcollect_status=''blocked''orcollect_status=''load_timeout''orcollect_status=''place_mismatch''orcollect_status=''parse_error'''),
+    (N'naver_place_keyword_snapshot', N'CK_naver_place_keyword_snapshot_status', N''),
     (N'naver_place_keyword_snapshot', N'CK_naver_place_keyword_snapshot_keyword_count', N'keyword_count>=0'),
     (N'naver_place_keyword_result', N'CK_naver_place_keyword_result_keyword_order', N'keyword_order>=1');
+
+DECLARE @expected_status_values TABLE (
+    status_value varchar(30) NOT NULL PRIMARY KEY
+);
+
+INSERT INTO @expected_status_values (status_value)
+VALUES
+    (N'SUCCESS'),
+    (N'EMPTY'),
+    (N'BLOCKED'),
+    (N'LOAD_TIMEOUT'),
+    (N'PLACE_MISMATCH'),
+    (N'PARSE_ERROR');
+
+DECLARE @actual_status_definition nvarchar(4000) = (
+    SELECT LOWER(
+        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            check_constraints.definition COLLATE DATABASE_DEFAULT,
+            N'[', N''), N']', N''), N'(', N''), N')', N''),
+            N' ', N''), NCHAR(9), N''), NCHAR(10), N''), NCHAR(13), N'')
+    )
+    FROM sys.check_constraints AS check_constraints
+    WHERE check_constraints.parent_object_id = OBJECT_ID(N'dbo.naver_place_keyword_snapshot')
+      AND check_constraints.name COLLATE DATABASE_DEFAULT = N'CK_naver_place_keyword_snapshot_status'
+      AND check_constraints.is_disabled = 0
+      AND check_constraints.is_not_trusted = 0
+);
+
+DECLARE @actual_status_literal_count int = (
+    (LEN(@actual_status_definition) - LEN(REPLACE(@actual_status_definition, N'''', N''))) / 2
+);
+
+IF @actual_status_definition IS NULL
+   OR @actual_status_literal_count <> (SELECT COUNT(*) FROM @expected_status_values)
+   OR EXISTS (
+        SELECT 1
+        FROM @expected_status_values AS expected_status
+        WHERE LEN(@actual_status_definition) - LEN(
+            REPLACE(
+                @actual_status_definition,
+                N'''' + LOWER(expected_status.status_value) + N'''',
+                N''
+            )
+        ) <> LEN(N'''' + expected_status.status_value + N'''')
+   )
+    THROW 51007, 'Place keyword status check definition mismatch.', 1;
 
 IF EXISTS (
     SELECT 1
@@ -229,7 +276,9 @@ IF EXISTS (
                 N' ', N''), NCHAR(9), N''), NCHAR(10), N''), NCHAR(13), N'')
         ) AS normalized_definition
     ) AS actual_check
-    WHERE check_constraints.object_id IS NULL
+    WHERE expected.constraint_name <> N'CK_naver_place_keyword_snapshot_status'
+      AND (
+           check_constraints.object_id IS NULL
        OR NOT EXISTS (
             SELECT 1
             FROM @expected_checks AS alternative
@@ -237,8 +286,11 @@ IF EXISTS (
               AND alternative.constraint_name = expected.constraint_name
               AND alternative.normalized_definition = actual_check.normalized_definition COLLATE DATABASE_DEFAULT
        )
+       OR check_constraints.is_disabled <> 0
+       OR check_constraints.is_not_trusted <> 0
+      )
 )
-    THROW 51007, 'Place keyword check constraint definition mismatch.', 1;
+    THROW 51008, 'Place keyword check constraint definition mismatch.', 1;
 
 IF EXISTS (
     SELECT 1
@@ -254,7 +306,7 @@ IF EXISTS (
       AND tables.name IN (N'naver_place_keyword_snapshot', N'naver_place_keyword_result')
       AND expected.constraint_name IS NULL
 )
-    THROW 51008, 'Unexpected place keyword check constraint found.', 1;
+    THROW 51009, 'Unexpected place keyword check constraint found.', 1;
 
 DECLARE @expected_indexes TABLE (
     table_name sysname NOT NULL,
@@ -307,8 +359,9 @@ IF EXISTS (
        OR indexes.is_primary_key <> expected.is_primary_key
        OR indexes.is_unique_constraint <> expected.is_unique_constraint
        OR ISNULL(actual_keys.key_definition COLLATE DATABASE_DEFAULT, N'') <> expected.key_definition
+       OR indexes.is_disabled <> 0
 )
-    THROW 51009, 'Place keyword index definition mismatch.', 1;
+    THROW 51010, 'Place keyword index definition mismatch.', 1;
 
 IF EXISTS (
     SELECT 1
@@ -322,7 +375,7 @@ IF EXISTS (
       AND indexes.index_id > 0
       AND expected.index_name IS NULL
 )
-    THROW 51010, 'Unexpected place keyword index found.', 1;
+    THROW 51011, 'Unexpected place keyword index found.', 1;
 
 DECLARE @verified_table_count int = (
     SELECT COUNT(*)
@@ -356,10 +409,10 @@ DECLARE @verified_index_count int = (
       AND indexes.index_id > 0
 );
 
-IF @verified_table_count <> 2 THROW 51011, 'Place keyword table count mismatch.', 1;
-IF @verified_column_count <> 19 THROW 51012, 'Place keyword column count mismatch.', 1;
-IF @verified_constraint_count <> 8 THROW 51013, 'Place keyword constraint count mismatch.', 1;
-IF @verified_index_count <> 7 THROW 51014, 'Place keyword index count mismatch.', 1;
+IF @verified_table_count <> 2 THROW 51012, 'Place keyword table count mismatch.', 1;
+IF @verified_column_count <> 19 THROW 51013, 'Place keyword column count mismatch.', 1;
+IF @verified_constraint_count <> 8 THROW 51014, 'Place keyword constraint count mismatch.', 1;
+IF @verified_index_count <> 7 THROW 51015, 'Place keyword index count mismatch.', 1;
 
 SELECT
     DB_NAME() AS database_name,

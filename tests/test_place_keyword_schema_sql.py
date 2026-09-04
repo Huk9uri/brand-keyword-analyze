@@ -148,3 +148,43 @@ def test_verify_sql_rejects_any_schema_contract_mismatch_read_only():
     assert sql.count("throw") >= 5
     for banned in ("create table", "create index", "alter table", "drop ", "delete ", "update "):
         assert banned not in sql
+
+
+def test_verify_sql_uses_sql_server_datetime2_metadata_precision():
+    sql = _normalized(VERIFY_SQL)
+
+    assert (
+        "(n'naver_place_keyword_snapshot', n'checked_at', "
+        "n'datetime2', 7, 23, 3, 0, 0)"
+    ) in sql
+
+
+def test_verify_sql_compares_allowed_status_values_without_predicate_order():
+    sql = _normalized(VERIFY_SQL)
+
+    assert "declare @expected_status_values table" in sql
+    assert "actual_status_literal_count" in sql
+    assert "expected_status_values" in sql
+    assert "len(replace" in sql
+    for status in (
+        "success",
+        "empty",
+        "blocked",
+        "load_timeout",
+        "place_mismatch",
+        "parse_error",
+    ):
+        assert f"n'{status}'" in sql
+
+
+def test_verify_sql_requires_constraints_and_indexes_to_be_enabled_and_trusted():
+    sql = _normalized(VERIFY_SQL)
+
+    for catalog_expression in (
+        "foreign_keys.is_disabled",
+        "foreign_keys.is_not_trusted",
+        "check_constraints.is_disabled",
+        "check_constraints.is_not_trusted",
+        "indexes.is_disabled",
+    ):
+        assert catalog_expression in sql
