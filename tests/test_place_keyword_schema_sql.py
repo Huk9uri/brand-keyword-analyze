@@ -32,9 +32,40 @@ RESULT_COLUMNS = {
     "normalized_keyword": "nvarchar(255)",
 }
 
+ALLOWED_STATUS_VALUES = (
+    "success",
+    "empty",
+    "blocked",
+    "load_timeout",
+    "place_mismatch",
+    "parse_error",
+)
+
 
 def _normalized(path: Path) -> str:
     return re.sub(r"\s+", " ", path.read_text(encoding="utf-8").lower()).strip()
+
+
+def _normal_status_expression(expression: str) -> str:
+    return re.sub(r"[\s\[\]()]", "", expression.casefold())
+
+
+def _is_collect_status_allow_list(expression: str) -> bool:
+    normalized = _normal_status_expression(expression)
+    literals = re.findall(r"'([^']+)'", normalized)
+    if sorted(literals) != sorted(ALLOWED_STATUS_VALUES):
+        return False
+
+    if normalized.startswith("collect_statusin"):
+        remainder = normalized.removeprefix("collect_statusin")
+        for status in ALLOWED_STATUS_VALUES:
+            remainder = remainder.replace(f"'{status}'", "")
+        return remainder == "," * (len(ALLOWED_STATUS_VALUES) - 1)
+
+    remainder = normalized
+    for status in ALLOWED_STATUS_VALUES:
+        remainder = remainder.replace(f"collect_status='{status}'", "")
+    return remainder == "or" * (len(ALLOWED_STATUS_VALUES) - 1)
 
 
 def _table_body(sql: str, table: str) -> str:
@@ -175,6 +206,44 @@ def test_verify_sql_compares_allowed_status_values_without_predicate_order():
         "parse_error",
     ):
         assert f"n'{status}'" in sql
+
+
+def test_status_allow_list_contract_accepts_in_and_reordered_or_terms():
+    assert _is_collect_status_allow_list(
+        "collect_status IN ('SUCCESS','EMPTY','BLOCKED','LOAD_TIMEOUT','PLACE_MISMATCH','PARSE_ERROR')"
+    )
+    assert _is_collect_status_allow_list(
+        "[collect_status] = 'PARSE_ERROR' OR [collect_status] = 'SUCCESS' OR "
+        "[collect_status] = 'PLACE_MISMATCH' OR [collect_status] = 'EMPTY' OR "
+        "[collect_status] = 'LOAD_TIMEOUT' OR [collect_status] = 'BLOCKED'"
+    )
+
+
+def test_status_allow_list_contract_rejects_invalid_column_operator_and_literals():
+    invalid_expressions = (
+        "collect_status NOT IN ('SUCCESS','EMPTY','BLOCKED','LOAD_TIMEOUT','PLACE_MISMATCH','PARSE_ERROR')",
+        "collect_method IN ('SUCCESS','EMPTY','BLOCKED','LOAD_TIMEOUT','PLACE_MISMATCH','PARSE_ERROR')",
+        "collect_status <> 'SUCCESS' OR collect_status = 'EMPTY' OR collect_status = 'BLOCKED' OR "
+        "collect_status = 'LOAD_TIMEOUT' OR collect_status = 'PLACE_MISMATCH' OR collect_status = 'PARSE_ERROR'",
+        "collect_status IN ('SUCCESS','SUCCESS','BLOCKED','LOAD_TIMEOUT','PLACE_MISMATCH','PARSE_ERROR')",
+        "collect_status IN ('SUCCESS','EMPTY','BLOCKED','LOAD_TIMEOUT','PLACE_MISMATCH','PARSE_ERROR','OTHER')",
+    )
+
+    for expression in invalid_expressions:
+        assert not _is_collect_status_allow_list(expression)
+
+
+def test_verify_sql_validates_status_operator_column_and_canonical_terms():
+    sql = _normalized(VERIFY_SQL)
+
+    for verifier_component in (
+        "@expected_status_terms",
+        "@actual_status_constraint_form",
+        "@canonical_status_remainder",
+    ):
+        assert verifier_component in sql
+    assert re.search(r"replicate\(\s*n'or'", sql)
+    assert re.search(r"replicate\(\s*n','", sql)
 
 
 def test_verify_sql_requires_constraints_and_indexes_to_be_enabled_and_trusted():

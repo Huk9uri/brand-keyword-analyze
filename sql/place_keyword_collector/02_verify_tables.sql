@@ -223,6 +223,20 @@ VALUES
     (N'PLACE_MISMATCH'),
     (N'PARSE_ERROR');
 
+DECLARE @expected_status_terms TABLE (
+    status_value varchar(30) NOT NULL PRIMARY KEY,
+    normalized_or_term nvarchar(100) NOT NULL
+);
+
+INSERT INTO @expected_status_terms (status_value, normalized_or_term)
+VALUES
+    (N'SUCCESS', N'collect_status=''success'''),
+    (N'EMPTY', N'collect_status=''empty'''),
+    (N'BLOCKED', N'collect_status=''blocked'''),
+    (N'LOAD_TIMEOUT', N'collect_status=''load_timeout'''),
+    (N'PLACE_MISMATCH', N'collect_status=''place_mismatch'''),
+    (N'PARSE_ERROR', N'collect_status=''parse_error''');
+
 DECLARE @actual_status_definition nvarchar(4000) = (
     SELECT LOWER(
         REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -241,8 +255,44 @@ DECLARE @actual_status_literal_count int = (
     (LEN(@actual_status_definition) - LEN(REPLACE(@actual_status_definition, N'''', N''))) / 2
 );
 
+DECLARE @actual_status_constraint_form varchar(2) = CASE
+    WHEN LEFT(@actual_status_definition, LEN(N'collect_statusin')) = N'collect_statusin' THEN N'IN'
+    WHEN LEFT(@actual_status_definition, LEN(N'collect_status=')) = N'collect_status=' THEN N'OR'
+    ELSE NULL
+END;
+
+DECLARE @canonical_status_remainder nvarchar(4000) = @actual_status_definition;
+
+IF @actual_status_constraint_form = N'IN'
+BEGIN
+    SET @canonical_status_remainder = STUFF(
+        @canonical_status_remainder,
+        1,
+        LEN(N'collect_statusin'),
+        N''
+    );
+
+    SELECT @canonical_status_remainder = REPLACE(
+        @canonical_status_remainder,
+        N'''' + LOWER(expected_status.status_value) + N'''',
+        N''
+    )
+    FROM @expected_status_values AS expected_status;
+END;
+
+IF @actual_status_constraint_form = N'OR'
+BEGIN
+    SELECT @canonical_status_remainder = REPLACE(
+        @canonical_status_remainder,
+        expected_status.normalized_or_term,
+        N''
+    )
+    FROM @expected_status_terms AS expected_status;
+END;
+
 IF @actual_status_definition IS NULL
    OR @actual_status_literal_count <> (SELECT COUNT(*) FROM @expected_status_values)
+   OR @actual_status_constraint_form IS NULL
    OR EXISTS (
         SELECT 1
         FROM @expected_status_values AS expected_status
@@ -254,6 +304,16 @@ IF @actual_status_definition IS NULL
             )
         ) <> LEN(N'''' + expected_status.status_value + N'''')
    )
+   OR (@actual_status_constraint_form = N'IN'
+       AND @canonical_status_remainder <> REPLICATE(
+            N',',
+            (SELECT COUNT(*) - 1 FROM @expected_status_values)
+       ))
+   OR (@actual_status_constraint_form = N'OR'
+       AND @canonical_status_remainder <> REPLICATE(
+            N'or',
+            (SELECT COUNT(*) - 1 FROM @expected_status_terms)
+       ))
     THROW 51007, 'Place keyword status check definition mismatch.', 1;
 
 IF EXISTS (
