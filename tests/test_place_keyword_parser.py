@@ -31,6 +31,34 @@ def test_parser_extracts_target_keyword_list_in_original_order():
     assert [item.keyword_order for item in parsed.keywords] == [1, 2, 3, 4]
 
 
+def test_parser_uses_containing_apollo_place_detail_cache_key():
+    parsed = KeywordListParser().parse(
+        fixture("apollo_normalized_keyword_list.html"),
+        "13149768",
+    )
+
+    assert [item.raw_keyword for item in parsed.keywords] == ["순대", "국밥"]
+
+
+def test_parser_does_not_use_photo_cache_keys_or_urls_as_place_identity():
+    html = """
+    <script>
+    window.__APOLLO_STATE__ = {
+      "PlaceDetailBase:99999999": {"id": "99999999"},
+      "PlaceDetailTopPhotoItem:13149768_business_1": {
+        "imageUrl": "https://example.test/photos/13149768.jpg"
+      },
+      "ROOT_QUERY": {
+        "placeDetail": {"informationTab": {"keywordList": ["wrong"]}}
+      }
+    };
+    </script>
+    """
+
+    with pytest.raises(PlaceMismatchError):
+        KeywordListParser().parse(html, "13149768")
+
+
 def test_parser_does_not_take_keyword_list_from_another_place():
     with pytest.raises(PlaceMismatchError):
         KeywordListParser().parse(fixture("wrong_place_object.html"), "13149768")

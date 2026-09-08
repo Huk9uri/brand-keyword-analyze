@@ -10,6 +10,7 @@ from .models import CollectedKeyword, ParsedKeywordList
 
 
 _MAX_SERIALIZED_DEPTH = 4
+_APOLLO_PLACE_DETAIL_PREFIX = "PlaceDetailBase:"
 
 
 class KeywordListParseError(ValueError):
@@ -74,10 +75,27 @@ def _decode_structural_quote_entities(text: str) -> str:
 
 
 def _mappings_from_text(text: str, depth: int) -> Iterator[Mapping[str, Any]]:
+    for mapping, _ in _mappings_with_place_context_from_text(
+        text,
+        depth,
+        frozenset(),
+    ):
+        yield mapping
+
+
+def _mappings_with_place_context_from_text(
+    text: str,
+    depth: int,
+    containing_cache_keys: frozenset[str],
+) -> Iterator[tuple[Mapping[str, Any], frozenset[str]]]:
     mappings = [
-        mapping
+        candidate
         for value in _json_values(text)
-        for mapping in _walk_structures(value, depth)
+        for candidate in _walk_structures_with_place_context(
+            value,
+            depth,
+            containing_cache_keys,
+        )
     ]
     if mappings:
         yield from mappings
@@ -86,25 +104,56 @@ def _mappings_from_text(text: str, depth: int) -> Iterator[Mapping[str, Any]]:
     structural_candidate = _decode_structural_quote_entities(text)
     if structural_candidate != text:
         for value in _json_values(structural_candidate):
-            for mapping in _walk_structures(value, depth):
-                if mapping in emitted:
+            for candidate in _walk_structures_with_place_context(
+                value,
+                depth,
+                containing_cache_keys,
+            ):
+                if candidate in emitted:
                     continue
-                emitted.append(mapping)
-                yield mapping
+                emitted.append(candidate)
+                yield candidate
 
 
 def _walk_structures(value: Any, depth: int = 0) -> Iterator[Mapping[str, Any]]:
+    for mapping, _ in _walk_structures_with_place_context(
+        value,
+        depth,
+        frozenset(),
+    ):
+        yield mapping
+
+
+def _walk_structures_with_place_context(
+    value: Any,
+    depth: int,
+    containing_cache_keys: frozenset[str],
+) -> Iterator[tuple[Mapping[str, Any], frozenset[str]]]:
     if isinstance(value, Mapping):
-        yield value
+        local_cache_keys = frozenset(
+            key
+            for key in value
+            if isinstance(key, str) and key.startswith(_APOLLO_PLACE_DETAIL_PREFIX)
+        )
+        cache_keys = containing_cache_keys | local_cache_keys
+        yield value, cache_keys
         for child in value.values():
-            yield from _walk_structures(child, depth)
+            yield from _walk_structures_with_place_context(child, depth, cache_keys)
         return
     if isinstance(value, list):
         for child in value:
-            yield from _walk_structures(child, depth)
+            yield from _walk_structures_with_place_context(
+                child,
+                depth,
+                containing_cache_keys,
+            )
         return
     if isinstance(value, str) and depth < _MAX_SERIALIZED_DEPTH:
-        yield from _mappings_from_text(value, depth + 1)
+        yield from _mappings_with_place_context_from_text(
+            value,
+            depth + 1,
+            containing_cache_keys,
+        )
 
 
 def _keyword_rows(values: list[Any]) -> tuple[CollectedKeyword, ...]:
@@ -136,12 +185,19 @@ class KeywordListParser:
         candidate_found = False
         matching_object_found = False
         matching_arrays: list[list[Any]] = []
+        expected_cache_key = f"{_APOLLO_PLACE_DETAIL_PREFIX}{expected_place_id}"
         for script in collector.scripts:
-            for mapping in _mappings_from_text(script, depth=0):
+            for mapping, containing_cache_keys in _mappings_with_place_context_from_text(
+                script,
+                depth=0,
+                containing_cache_keys=frozenset(),
+            ):
                 if "keywordList" not in mapping:
                     continue
                 candidate_found = True
-                if str(mapping.get("id")) != str(expected_place_id):
+                internal_id_matches = str(mapping.get("id")) == str(expected_place_id)
+                cache_key_matches = expected_cache_key in containing_cache_keys
+                if not (internal_id_matches or cache_key_matches):
                     continue
                 matching_object_found = True
                 keyword_list = mapping["keywordList"]
