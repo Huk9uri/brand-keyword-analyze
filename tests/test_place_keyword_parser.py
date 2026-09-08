@@ -59,6 +59,20 @@ def test_parser_does_not_inherit_apollo_identity_from_nested_place_detail_key():
         KeywordListParser().parse(html, "13149768")
 
 
+def test_parser_does_not_promote_raw_fragment_before_entity_decoded_root():
+    html = """
+    <script>
+    {&quot;wrapper&quot;:{
+      "PlaceDetailBase:13149768": {"id": "13149768"},
+      "informationTab": {"keywordList": ["wrong"]}
+    }}
+    </script>
+    """
+
+    with pytest.raises(PlaceMismatchError):
+        KeywordListParser().parse(html, "13149768")
+
+
 def test_parser_rejects_one_idless_array_when_top_level_has_multiple_places():
     html = apollo_state(
         {

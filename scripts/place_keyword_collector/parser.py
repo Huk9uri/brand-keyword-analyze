@@ -49,9 +49,7 @@ class _ScriptCollector(HTMLParser):
             self._parts = []
 
 
-def _json_values(text: str) -> Iterator[Any]:
-    """Yield complete JSON values embedded in a JavaScript payload."""
-
+def _json_value_candidates(text: str) -> Iterator[tuple[Any, int]]:
     decoder = json.JSONDecoder()
     index = 0
     while index < len(text):
@@ -63,8 +61,20 @@ def _json_values(text: str) -> Iterator[Any]:
         except json.JSONDecodeError:
             index += 1
             continue
-        yield value
+        yield value, index
         index = max(end, index + 1)
+
+
+def _json_values(text: str) -> Iterator[Any]:
+    """Yield complete JSON values embedded in a JavaScript payload."""
+
+    for value, _ in _json_value_candidates(text):
+        yield value
+
+
+def _is_logical_root_start(text: str, index: int) -> bool:
+    prefix = text[:index].rstrip()
+    return not prefix or prefix[-1] in "=;("
 
 
 def _decode_structural_quote_entities(text: str) -> str:
@@ -106,16 +116,19 @@ def _mappings_with_place_context_from_text(
 ) -> Iterator[tuple[Mapping[str, Any], str | None]]:
     mappings = [
         candidate
-        for value in _json_values(text)
+        for value, index in _json_value_candidates(text)
+        for can_establish_cache_context in (
+            may_establish_cache_context and _is_logical_root_start(text, index),
+        )
         for candidate in _walk_structures_with_place_context(
             value,
             depth,
             (
                 _single_top_level_place_detail_cache_key(value)
-                if may_establish_cache_context and isinstance(value, Mapping)
+                if can_establish_cache_context and isinstance(value, Mapping)
                 else inherited_cache_key
             ),
-            may_establish_cache_context,
+            can_establish_cache_context,
         )
     ]
     if mappings:
@@ -124,16 +137,20 @@ def _mappings_with_place_context_from_text(
     emitted = list(mappings)
     structural_candidate = _decode_structural_quote_entities(text)
     if structural_candidate != text:
-        for value in _json_values(structural_candidate):
+        for value, index in _json_value_candidates(structural_candidate):
+            can_establish_cache_context = (
+                may_establish_cache_context
+                and _is_logical_root_start(structural_candidate, index)
+            )
             for candidate in _walk_structures_with_place_context(
                 value,
                 depth,
                 (
                     _single_top_level_place_detail_cache_key(value)
-                    if may_establish_cache_context and isinstance(value, Mapping)
+                    if can_establish_cache_context and isinstance(value, Mapping)
                     else inherited_cache_key
                 ),
-                may_establish_cache_context,
+                can_establish_cache_context,
             ):
                 if candidate in emitted:
                     continue
