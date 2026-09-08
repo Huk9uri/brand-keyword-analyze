@@ -3,6 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import re
+from uuid import UUID
+
+
+_NAVER_PLACE_ID = re.compile(r"[0-9]+")
+
+
+def normalize_place_id(value: object) -> str:
+    place_id = str(value).strip() if value is not None else ""
+    if _NAVER_PLACE_ID.fullmatch(place_id) is None:
+        raise ValueError("place_id must be a numeric Naver Place ID")
+    return place_id
+
+
+def normalize_uuid(value: object, field_name: str) -> str:
+    try:
+        return str(UUID(str(value)))
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a UUID") from None
 
 
 class RefreshPolicy(str, Enum):
@@ -23,6 +42,9 @@ class KeywordCollectStatus(str, Enum):
 class RankPlaceTarget:
     place_id: str
     place_name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "place_id", normalize_place_id(self.place_id))
 
 
 @dataclass(frozen=True)

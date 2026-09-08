@@ -59,6 +59,14 @@ https://m.place.naver.com/restaurant/{place_id}/home
 
 단순 정규식만으로 배열을 확정하지 않는다. 정규식은 직렬화 데이터 후보 영역 탐색에만 사용할 수 있다.
 
+Apollo 직렬화 데이터의 매장 신원 판정은 다음 계약을 따른다.
+
+- 하나의 논리적 최상위 객체에 `PlaceDetailBase:{요청 Place ID}` 키가 정확히 하나만 있으면, 그 최상위 객체 아래의 `id` 없는 `keywordList` 배열에도 해당 매장 컨텍스트를 상속할 수 있다.
+- 논리적 최상위 객체에 `PlaceDetailBase:` 매장이 둘 이상 있으면 `id` 없는 배열은 어느 매장 것인지 확정하지 않고 거부한다. 다만 배열과 같은 객체의 명시적 `id`가 요청 Place ID와 일치하면 그 객체는 사용할 수 있다.
+- 중첩 객체 안의 `PlaceDetailBase:` 키는 최상위 매장 컨텍스트를 만들지 않는다.
+- `PlaceDetailTopPhotoItem:` 같은 사진 캐시 키, 사진 URL 및 URL에 포함된 숫자는 매장 식별 근거로 사용하지 않는다.
+- 요청 매장으로 확정된 객체의 `keywordList:null`은 대표키워드 미설정 관측으로 보아 빈 배열과 같은 `EMPTY`로 처리한다.
+
 ### 4.3 최소 정규화
 
 - `raw_keyword`: 네이버 원문 그대로 저장
@@ -96,10 +104,14 @@ https://m.place.naver.com/restaurant/{place_id}/home
 
 - 매장별 최대 3회 시도
 - `BLOCKED`와 `LOAD_TIMEOUT`은 간격을 두고 재시도
+- 재시도 대기는 1초, 2초, 4초 순으로 증가시키되 8초를 상한으로 하며, 테스트에서는 주입한 대기 함수로 정확한 호출을 검증
 - `PARSE_ERROR`와 `PLACE_MISMATCH`는 증거를 저장하고 동일 실행에서 재시도하지 않음
 - 동일 실패가 연속 5개 매장에서 발생하면 실행 중단
 - 실패 스냅샷이 직전 성공 결과를 삭제하거나 덮어쓰지 않음
 - 직전 성공 또는 `EMPTY` 결과가 있으면 `effective_snapshot_id`로 유지하고 후속 평가에서 `STALE`로 식별 가능하게 함
+- `run_id`와 `rank_run_id`는 UUID, Place ID는 ASCII 숫자로 검증하며 증거 디렉터리의 최종 해석 경로가 설정한 증거 루트 안에 있는지 확인
+- 일반 브라우저 오류도 캡처된 HTML이 있으면 안전한 증거 저장을 시도한 뒤 치명 오류로 전파하며, 증거가 일부만 저장되거나 저장되지 않으면 경고를 노출
+- 스크린샷 저장에 실패했을 때 빈 이미지나 대체 이미지를 `screenshot.png`로 만들지 않음
 
 ## 8. 저장 구조
 
@@ -126,6 +138,7 @@ https://m.place.naver.com/restaurant/{place_id}/home
 | `checked_at` | 확인 시각 |
 
 변경이 없는 성공 확인과 실패도 새 스냅샷으로 기록한다. `effective_snapshot_id`는 키워드 결과가 실제 저장된 최신 유효 스냅샷을 가리킨다.
+`effective_snapshot_id`가 비어 있지 않으면 같은 `place_id`의 `SUCCESS` 또는 `EMPTY` 스냅샷만 가리켜야 한다. 저장소는 외부 유효 스냅샷을 쓰기 전에 이 조건을 확인하고, 재실행 가능한 DB 트리거가 같은 불변성을 강제하며, 검증 SQL은 기존 데이터의 위반도 탐지한다.
 
 ### 8.2 `dbo.naver_place_keyword_result`
 

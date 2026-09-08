@@ -275,6 +275,16 @@ def test_cli_defaults_to_top_ten_and_monthly():
     assert args.refresh_policy == "monthly"
 
 
+@pytest.mark.parametrize("rank_run_id", ["not-a-uuid", "../escape"])
+def test_cli_rejects_non_uuid_rank_run_id(rank_run_id: str):
+    from scripts.place_keyword_collector.cli import parse_args
+
+    with pytest.raises(SystemExit) as caught:
+        parse_args(["--rank-run-id", rank_run_id])
+
+    assert caught.value.code == 2
+
+
 def test_cli_accepts_all_collection_options():
     from scripts.place_keyword_collector.cli import parse_args
 
@@ -334,6 +344,23 @@ def test_include_place_id_rejects_ids_absent_from_rank_run():
         match="requested Place ID is absent from the rank run: 999",
     ):
         select_included_targets(targets, ("999",))
+
+
+@pytest.mark.parametrize("place_id", ["../escape", "12/34", "１２３", "abc"])
+def test_cli_rejects_non_numeric_include_place_id(place_id: str):
+    from scripts.place_keyword_collector.cli import parse_args
+
+    with pytest.raises(SystemExit) as caught:
+        parse_args(
+            [
+                "--rank-run-id",
+                RANK_RUN_ID,
+                "--include-place-id",
+                place_id,
+            ]
+        )
+
+    assert caught.value.code == 2
 
 
 def test_dry_run_lists_unique_target_count_without_browser_or_writes(tmp_path: Path):

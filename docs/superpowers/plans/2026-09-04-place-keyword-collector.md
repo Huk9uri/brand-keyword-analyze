@@ -298,6 +298,8 @@ Run: `./.venv/Scripts/python.exe -m pytest -q tests/test_place_keyword_parser.py
 
 Parse script payloads into Python structures where possible and recursively traverse mappings and arrays. Only accept `keywordList` from a mapping whose `id` string equals `expected_place_id`. Decode escaped serialized payloads in bounded passes; never use `eval`.
 
+라이브 확정 파싱 계약은 다음과 같다. 하나의 논리적 최상위 Apollo 객체에 `PlaceDetailBase:{요청 Place ID}` 키가 정확히 하나만 있으면 그 객체 아래의 `id` 없는 `keywordList` 배열을 요청 매장의 배열로 허용한다. 최상위 `PlaceDetailBase:` 매장이 둘 이상이면 `id` 없는 배열은 거부하고, 배열과 같은 객체에 요청 Place ID가 명시된 경우만 허용한다. 중첩 `PlaceDetailBase:` 키, `PlaceDetailTopPhotoItem:` 같은 사진 키, 사진 URL 및 URL 속 숫자는 매장 신원으로 사용하지 않는다. 요청 매장 객체의 `keywordList:null`은 정상적인 미설정 관측으로 분류하여 빈 배열과 같은 `EMPTY`로 처리한다.
+
 ```python
 def normalize_keyword(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value)

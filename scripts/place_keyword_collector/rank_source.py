@@ -4,17 +4,17 @@ import calendar
 from datetime import datetime, timedelta
 from typing import Any
 
-from .models import PreviousVersion, RankPlaceTarget, RefreshPolicy
+from .models import PreviousVersion, RankPlaceTarget, RefreshPolicy, normalize_place_id
 
 
 RANK_PLACE_TARGETS_SQL = """
 WITH ranked_places AS (
     SELECT
-        result.place_id,
+        LTRIM(RTRIM(result.place_id)) AS place_id,
         result.place_name,
         result.organic_rank,
         ROW_NUMBER() OVER (
-            PARTITION BY result.place_id
+            PARTITION BY LTRIM(RTRIM(result.place_id))
             ORDER BY result.organic_rank, result.place_name
         ) AS place_row_number
     FROM dbo.naver_keyword_discovery_result AS result
@@ -22,6 +22,8 @@ WITH ranked_places AS (
         ON snapshot.snapshot_id = result.snapshot_id
     WHERE snapshot.run_id = %s
       AND snapshot.collect_status IN ('SUCCESS', 'PARTIAL')
+      AND result.place_id IS NOT NULL
+      AND NULLIF(LTRIM(RTRIM(result.place_id)), '') IS NOT NULL
       AND result.organic_rank IS NOT NULL
       AND result.is_ad = 0
       AND result.organic_rank <= %s
@@ -41,10 +43,14 @@ class RankResultSource:
 
     def load(self, rank_run_id: str, top_n: int = 10) -> tuple[RankPlaceTarget, ...]:
         self._cursor.execute(RANK_PLACE_TARGETS_SQL, (rank_run_id, top_n))
-        return tuple(
-            RankPlaceTarget(place_id=str(row[0]), place_name=str(row[1]))
-            for row in self._cursor.fetchall()
-        )
+        targets: list[RankPlaceTarget] = []
+        for row in self._cursor.fetchall():
+            try:
+                place_id = normalize_place_id(row[0])
+            except ValueError:
+                raise ValueError("invalid Naver Place ID from rank result") from None
+            targets.append(RankPlaceTarget(place_id=place_id, place_name=str(row[1])))
+        return tuple(targets)
 
 
 def is_refresh_due(

@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 import pytest
@@ -77,5 +78,17 @@ def test_contract_records_preserve_keyword_order_and_snapshot_lineage():
 def test_contract_records_are_immutable():
     target = RankPlaceTarget(place_id="13149768", place_name="농민백암순대 본점")
 
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         target.place_name = "changed"  # type: ignore[misc]
+
+
+def test_rank_place_target_trims_numeric_naver_place_id():
+    target = RankPlaceTarget(place_id=" 13149768 ", place_name="농민백암순대 본점")
+
+    assert target.place_id == "13149768"
+
+
+@pytest.mark.parametrize("place_id", ["", "   ", "../escape", "12/34", "１２３", "abc"])
+def test_rank_place_target_rejects_non_numeric_naver_place_id(place_id: str):
+    with pytest.raises(ValueError, match="numeric Naver Place ID"):
+        RankPlaceTarget(place_id=place_id, place_name="잘못된 매장")

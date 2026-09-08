@@ -101,6 +101,11 @@ class FakeCursor:
             self.rows = list(self.connection.schema_rows)
         elif normalized.startswith("select top (1)"):
             self.row = self.connection.previous_row
+        elif (
+            normalized.startswith("select count(*)")
+            and "from dbo.naver_place_keyword_snapshot as effective" in normalized
+        ):
+            self.row = (self.connection.effective_validation_count,)
         elif normalized.startswith("insert into dbo.naver_place_keyword_snapshot"):
             if self.connection.snapshot_error is not None:
                 raise self.connection.snapshot_error
@@ -152,6 +157,7 @@ class FakeConnection:
         reported_result_count=None,
         missing_identity=False,
         rollback_error=None,
+        effective_validation_count=1,
     ):
         self.database = database
         self.schema_rows = schema_rows if schema_rows is not None else _schema_rows()
@@ -163,6 +169,7 @@ class FakeConnection:
         self.reported_result_count = reported_result_count
         self.missing_identity = missing_identity
         self.rollback_error = rollback_error
+        self.effective_validation_count = effective_validation_count
         self.events = []
         self.executemany_calls = []
         self.result_rows = []
@@ -305,6 +312,8 @@ def test_get_previous_returns_latest_check_and_its_effective_version():
         if event[0] == "execute" and event[1].lstrip().lower().startswith("select top (1)")
     )
     assert "effective.content_hash" in select_event[1]
+    assert "effective.place_id = latest.place_id" in select_event[1]
+    assert "effective.collect_status IN ('SUCCESS', 'EMPTY')" in select_event[1]
     assert "ORDER BY latest.checked_at DESC, latest.snapshot_id DESC" in select_event[1]
     assert select_event[2] == ("13149768",)
     assert connection.events[-1] == ("cursor_close",)
@@ -396,6 +405,50 @@ def test_failure_inserts_no_keyword_rows_and_keeps_previous_effective_snapshot()
     assert connection.inserted_snapshot_params[9] == 73
     assert connection.updated_effective_id is None
     assert connection.commits == 1
+
+
+def test_external_effective_snapshot_is_validated_for_same_place_and_valid_status():
+    connection = FakeConnection()
+    snapshot = _snapshot(
+        KeywordCollectStatus.BLOCKED,
+        changed=False,
+        effective_snapshot_id=73,
+        keyword_count=0,
+        content_hash=None,
+    )
+
+    PlaceKeywordRepository(connection).save(snapshot, ())
+
+    validation_event = next(
+        event
+        for event in connection.events
+        if event[0] == "execute"
+        and "from dbo.naver_place_keyword_snapshot as effective"
+        in " ".join(event[1].lower().split())
+    )
+    normalized = " ".join(validation_event[1].lower().split())
+    assert "effective.snapshot_id = %s" in normalized
+    assert "effective.place_id = %s" in normalized
+    assert "effective.collect_status in ('success', 'empty')" in normalized
+    assert validation_event[2] == (73, "13149768")
+
+
+def test_invalid_external_effective_snapshot_rolls_back_before_insert():
+    connection = FakeConnection(effective_validation_count=0)
+    snapshot = _snapshot(
+        KeywordCollectStatus.BLOCKED,
+        changed=False,
+        effective_snapshot_id=73,
+        keyword_count=0,
+        content_hash=None,
+    )
+
+    with pytest.raises(TaskPersistenceError, match="effective snapshot"):
+        PlaceKeywordRepository(connection).save(snapshot, ())
+
+    assert connection.inserted_snapshot_params is None
+    assert connection.rollbacks == 1
+    assert connection.commits == 0
 
 
 def test_result_count_mismatch_rolls_back_without_commit():

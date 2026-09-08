@@ -159,6 +159,15 @@ def test_create_sql_is_idempotent_and_indexes_required_lookup_paths():
         assert f"name = n'{index_name}'" in sql
 
 
+def test_create_sql_idempotently_enforces_effective_snapshot_invariant_for_existing_tables():
+    sql = _normalized(CREATE_SQL)
+
+    assert "create or alter trigger dbo.tr_naver_place_keyword_snapshot_validate_effective" in sql
+    assert "effective.place_id <> inserted.place_id" in sql
+    assert "effective.collect_status not in ('success', 'empty')" in sql
+    assert "throw 51020" in sql
+
+
 def test_verify_sql_rejects_any_schema_contract_mismatch_read_only():
     sql = _normalized(VERIFY_SQL)
 
@@ -277,3 +286,21 @@ def test_verify_sql_requires_constraints_and_indexes_to_be_enabled_and_trusted()
         "indexes.is_disabled",
     ):
         assert catalog_expression in sql
+
+
+def test_verify_sql_requires_enabled_effective_snapshot_invariant_trigger():
+    sql = _normalized(VERIFY_SQL)
+
+    assert "sys.triggers" in sql
+    assert "tr_naver_place_keyword_snapshot_validate_effective" in sql
+    assert "triggers.is_disabled" in sql
+    assert "throw 51016" in sql
+
+
+def test_verify_sql_rejects_existing_invalid_effective_snapshot_links():
+    sql = _normalized(VERIFY_SQL)
+
+    assert "current_snapshot.effective_snapshot_id is not null" in sql
+    assert "effective.place_id <> current_snapshot.place_id" in sql
+    assert "effective.collect_status not in ('success', 'empty')" in sql
+    assert "throw 51017" in sql

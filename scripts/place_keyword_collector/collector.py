@@ -5,13 +5,16 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import time
 from types import MappingProxyType
 from typing import Any, Callable
 from urllib.parse import quote
+import warnings
 
 from .browser import (
     MOBILE_PLACE_HOME,
     BlockedPageError,
+    PlaceBrowserError,
     PlaceLoadTimeout,
     PlacePage,
 )
@@ -24,6 +27,8 @@ from .models import (
     PreviousVersion,
     RankPlaceTarget,
     RefreshPolicy,
+    normalize_place_id,
+    normalize_uuid,
 )
 from .parser import KeywordListParseError, PlaceMismatchError
 from .rank_source import is_refresh_due
@@ -33,11 +38,11 @@ PARSER_VERSION = "v1"
 _VALID_STATUSES = frozenset(
     {KeywordCollectStatus.SUCCESS, KeywordCollectStatus.EMPTY}
 )
-_EMPTY_PNG = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDAT\x08\xd7c\xf8\xcf"
-    b"\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+_MAX_RETRY_BACKOFF_SECONDS = 8.0
+
+
+class EvidenceSaveWarning(RuntimeWarning):
+    """Failure evidence was only partially saved or could not be saved."""
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,7 @@ class PlaceKeywordCollector:
         failure_limit: int = 5,
         parser_version: str = PARSER_VERSION,
         clock: Callable[[], datetime] = datetime.now,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         if (
             isinstance(max_retries, bool)
@@ -103,6 +109,7 @@ class PlaceKeywordCollector:
         self.failure_limit = failure_limit
         self.parser_version = parser_version
         self.clock = clock
+        self.sleeper = sleeper
         self._browser: Any | None = None
 
     def run(
@@ -113,6 +120,8 @@ class PlaceKeywordCollector:
         policy: RefreshPolicy,
         force_refresh: bool = False,
     ) -> CollectionSummary:
+        run_id = normalize_uuid(run_id, "run_id")
+        rank_run_id = normalize_uuid(rank_run_id, "rank_run_id")
         target_list = tuple(targets)
         now = self.clock()
         refreshes = tuple(
@@ -203,8 +212,8 @@ class PlaceKeywordCollector:
     ) -> _FinalAttempt:
         total_attempts = self.max_retries + 1
         for attempt_number in range(1, total_attempts + 1):
-            browser = self._ensure_browser()
             try:
+                browser = self._ensure_browser()
                 page = browser.fetch(target)
             except (BlockedPageError, PlaceLoadTimeout) as exc:
                 final_attempt = self._browser_failure(
@@ -215,8 +224,14 @@ class PlaceKeywordCollector:
                     exc,
                 )
                 if attempt_number < total_attempts:
+                    self.sleeper(_retry_backoff_seconds(attempt_number))
                     continue
                 return final_attempt
+            except PlaceBrowserError as exc:
+                if exc.html:
+                    note = self._save_evidence(run_id, target.place_id, exc.html)
+                    exc.add_note(note)
+                raise
 
             return self._parse_page(
                 target,
@@ -375,18 +390,38 @@ class PlaceKeywordCollector:
             self._browser = self.browser_factory.create()
         return self._browser
 
-    def _save_evidence(self, run_id: str, place_id: str, html: str) -> None:
-        directory = self.artifact_root / run_id / place_id
+    def _save_evidence(self, run_id: str, place_id: str, html: str) -> str:
+        try:
+            directory = _evidence_directory(self.artifact_root, run_id, place_id)
+        except ValueError:
+            warnings.warn(
+                "could not save failure evidence because its path was rejected",
+                EvidenceSaveWarning,
+                stacklevel=2,
+            )
+            return "failure evidence could not be saved"
         try:
             if self._browser is not None:
                 self._browser.save_evidence(directory, html)
             else:
                 _write_fallback_evidence(directory, html)
+            return "failure evidence saved"
         except Exception:
             try:
                 _write_fallback_evidence(directory, html)
+                warnings.warn(
+                    "failure evidence HTML was saved, but screenshot was not saved",
+                    EvidenceSaveWarning,
+                    stacklevel=2,
+                )
+                return "failure evidence HTML saved without screenshot"
             except OSError:
-                pass
+                warnings.warn(
+                    "could not save failure evidence",
+                    EvidenceSaveWarning,
+                    stacklevel=2,
+                )
+                return "failure evidence could not be saved"
 
     def _close_browser(self) -> None:
         browser = self._browser
@@ -419,7 +454,22 @@ def _capped(message: str | None) -> str | None:
 def _write_fallback_evidence(directory: Path, html: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "page.html").write_text(html, encoding="utf-8")
-    (directory / "screenshot.png").write_bytes(_EMPTY_PNG)
 
 
-__all__ = ["CollectorSummary", "PlaceKeywordCollector"]
+def _retry_backoff_seconds(attempt_number: int) -> float:
+    return min(float(2 ** (attempt_number - 1)), _MAX_RETRY_BACKOFF_SECONDS)
+
+
+def _evidence_directory(artifact_root: str | Path, run_id: str, place_id: str) -> Path:
+    safe_run_id = normalize_uuid(run_id, "run_id")
+    safe_place_id = normalize_place_id(place_id)
+    root = Path(artifact_root).resolve(strict=False)
+    directory = (root / safe_run_id / safe_place_id).resolve(strict=False)
+    try:
+        directory.relative_to(root)
+    except ValueError:
+        raise ValueError("resolved evidence path is outside artifact root") from None
+    return directory
+
+
+__all__ = ["CollectorSummary", "EvidenceSaveWarning", "PlaceKeywordCollector"]

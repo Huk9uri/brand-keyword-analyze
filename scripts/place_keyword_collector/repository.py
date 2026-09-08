@@ -75,8 +75,18 @@ SELECT TOP (1)
 FROM dbo.naver_place_keyword_snapshot AS latest
 INNER JOIN dbo.naver_place_keyword_snapshot AS effective
     ON effective.snapshot_id = latest.effective_snapshot_id
+   AND effective.place_id = latest.place_id
+   AND effective.collect_status IN ('SUCCESS', 'EMPTY')
 WHERE latest.place_id = %s
 ORDER BY latest.checked_at DESC, latest.snapshot_id DESC
+"""
+
+VALIDATE_EFFECTIVE_SNAPSHOT_SQL = """
+SELECT COUNT(*)
+FROM dbo.naver_place_keyword_snapshot AS effective
+WHERE effective.snapshot_id = %s
+  AND effective.place_id = %s
+  AND effective.collect_status IN ('SUCCESS', 'EMPTY')
 """
 
 SCHEMA_COLUMNS_SQL = """
@@ -284,7 +294,20 @@ class PlaceKeywordRepository:
             initial_effective_id = (
                 None if creates_valid_version else snapshot.effective_snapshot_id
             )
+            if initial_effective_id is not None:
+                operation = "effective snapshot validation"
+                cursor.execute(
+                    VALIDATE_EFFECTIVE_SNAPSHOT_SQL,
+                    (initial_effective_id, snapshot.target.place_id),
+                )
+                valid_row = cursor.fetchone()
+                valid_count = int(valid_row[0]) if valid_row is not None else 0
+                if valid_count != 1:
+                    raise TaskPersistenceError(
+                        "effective snapshot must be a valid version for the same Place"
+                    )
 
+            operation = "snapshot"
             cursor.execute(
                 SNAPSHOT_INSERT_SQL,
                 _snapshot_values(snapshot, initial_effective_id),

@@ -31,6 +31,30 @@ BEGIN
     );
 END;
 
+GO
+CREATE OR ALTER TRIGGER dbo.TR_naver_place_keyword_snapshot_validate_effective
+ON dbo.naver_place_keyword_snapshot
+AFTER INSERT, UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF EXISTS (
+        SELECT 1
+        FROM inserted
+        LEFT JOIN dbo.naver_place_keyword_snapshot AS effective
+          ON effective.snapshot_id = inserted.effective_snapshot_id
+        WHERE inserted.effective_snapshot_id IS NOT NULL
+          AND (
+               effective.snapshot_id IS NULL
+            OR effective.place_id <> inserted.place_id
+            OR effective.collect_status NOT IN ('SUCCESS', 'EMPTY')
+          )
+    )
+        THROW 51020, 'effective_snapshot_id must reference a valid snapshot for the same Place.', 1;
+END;
+GO
+
 IF OBJECT_ID(N'dbo.naver_place_keyword_result', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.naver_place_keyword_result (

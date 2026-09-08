@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+import scripts.place_keyword_collector.collector as collector_module
 from scripts.place_keyword_collector.browser import (
     BlockedPageError,
+    PlaceBrowserError,
     PlaceLoadTimeout,
     PlacePage,
 )
@@ -97,12 +99,13 @@ class FakeRepository:
 
 
 class FakeBrowser:
-    def __init__(self, outcomes, events=None) -> None:
+    def __init__(self, outcomes, events=None, *, evidence_error=None) -> None:
         self.outcomes = deque(outcomes)
         self.events = events if events is not None else []
         self.fetch_calls: list[str] = []
         self.evidence_calls: list[tuple[Path, str]] = []
         self.close_calls = 0
+        self.evidence_error = evidence_error
 
     def fetch(self, place_target: RankPlaceTarget) -> PlacePage:
         self.fetch_calls.append(place_target.place_id)
@@ -113,6 +116,8 @@ class FakeBrowser:
         return outcome
 
     def save_evidence(self, directory: Path, html: str):
+        if self.evidence_error is not None:
+            raise self.evidence_error
         directory = Path(directory)
         self.evidence_calls.append((directory, html))
         directory.mkdir(parents=True, exist_ok=True)
@@ -146,9 +151,12 @@ def collector(
     failure_limit: int = 5,
     events=None,
     repository=None,
+    max_retries: int = 2,
+    sleeper=None,
+    evidence_error=None,
 ):
     events = events if events is not None else []
-    browser = FakeBrowser(outcomes, events)
+    browser = FakeBrowser(outcomes, events, evidence_error=evidence_error)
     factory = FakeBrowserFactory(browser, events)
     repository = repository or FakeRepository(previous_by_place, events)
     instance = PlaceKeywordCollector(
@@ -156,9 +164,10 @@ def collector(
         KeywordListParser(),
         repository,
         artifact_root=tmp_path / "artifacts",
-        max_retries=2,
+        max_retries=max_retries,
         failure_limit=failure_limit,
         clock=lambda: NOW,
+        sleeper=sleeper or (lambda _seconds: None),
     )
     return instance, factory, browser, repository
 
@@ -239,6 +248,37 @@ def test_retryable_failure_uses_three_total_attempts_and_persists_only_final_att
     assert summary.status_counts == {expected_status: 1}
 
 
+@pytest.mark.parametrize("error_factory", [blocked, timeout])
+def test_retryable_failure_waits_with_exact_bounded_backoff(
+    tmp_path: Path,
+    error_factory,
+):
+    sleeps: list[float] = []
+    instance, _, _, _ = collector(
+        tmp_path,
+        [error_factory("first"), error_factory("second"), page("13149768", "순대")],
+        sleeper=sleeps.append,
+    )
+
+    instance.run([target()], RUN_ID, RANK_RUN_ID, RefreshPolicy.MONTHLY)
+
+    assert sleeps == [1.0, 2.0]
+
+
+def test_retry_backoff_is_capped_for_large_retry_counts(tmp_path: Path):
+    sleeps: list[float] = []
+    instance, _, _, _ = collector(
+        tmp_path,
+        [timeout(str(index)) for index in range(6)],
+        max_retries=5,
+        sleeper=sleeps.append,
+    )
+
+    instance.run([target()], RUN_ID, RANK_RUN_ID, RefreshPolicy.MONTHLY)
+
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 8.0]
+
+
 def test_transient_retryable_failure_then_success_persists_only_success_without_evidence(
     tmp_path: Path,
 ):
@@ -289,6 +329,108 @@ def test_parser_failures_are_not_retried_and_save_final_evidence(
     assert browser.evidence_calls == [
         (tmp_path / "artifacts" / RUN_ID / "13149768", bad_page.html)
     ]
+
+
+def test_generic_browser_error_with_captured_html_saves_evidence_then_remains_fatal(
+    tmp_path: Path,
+):
+    error = PlaceBrowserError(
+        "Place browser state inspection failed",
+        last_url=PLACE_URL.format(place_id="13149768"),
+        html="<html>captured failure</html>",
+    )
+    instance, _, browser, repository = collector(tmp_path, [error])
+
+    with pytest.raises(PlaceBrowserError) as raised:
+        instance.run([target()], RUN_ID, RANK_RUN_ID, RefreshPolicy.MONTHLY)
+
+    evidence_dir = tmp_path / "artifacts" / RUN_ID / "13149768"
+    assert browser.evidence_calls == [(evidence_dir, error.html)]
+    assert repository.saved == []
+    assert any("failure evidence saved" in note for note in raised.value.__notes__)
+
+
+def test_evidence_screenshot_failure_keeps_html_without_fake_screenshot_and_warns(
+    tmp_path: Path,
+):
+    bad_page = PlacePage(PLACE_URL.format(place_id="13149768"), "<script>{}</script>")
+    instance, _, _, repository = collector(
+        tmp_path,
+        [bad_page],
+        evidence_error=RuntimeError("screenshot secret detail"),
+    )
+
+    with pytest.warns(RuntimeWarning, match="screenshot was not saved") as warnings:
+        instance.run([target()], RUN_ID, RANK_RUN_ID, RefreshPolicy.MONTHLY)
+
+    evidence_dir = tmp_path / "artifacts" / RUN_ID / "13149768"
+    assert (evidence_dir / "page.html").read_text(encoding="utf-8") == bad_page.html
+    assert not (evidence_dir / "screenshot.png").exists()
+    assert "secret" not in str(warnings[0].message)
+    assert repository.saved[0].snapshot.status is KeywordCollectStatus.PARSE_ERROR
+
+
+@pytest.mark.parametrize(
+    ("run_id", "rank_run_id"),
+    [("../escape", RANK_RUN_ID), (RUN_ID, "not-a-uuid")],
+)
+def test_collector_rejects_non_uuid_run_identifiers_before_side_effects(
+    tmp_path: Path,
+    run_id: str,
+    rank_run_id: str,
+):
+    events: list[tuple[str, str | None]] = []
+    instance, factory, _, repository = collector(tmp_path, [], events=events)
+
+    with pytest.raises(ValueError, match="UUID"):
+        instance.run([target()], run_id, rank_run_id, RefreshPolicy.MONTHLY)
+
+    assert events == []
+    assert factory.create_calls == 0
+    assert repository.saved == []
+
+
+def test_evidence_directory_rejects_resolved_path_outside_artifact_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    artifact_root = tmp_path / "artifacts"
+    resolved_root = artifact_root.absolute()
+    outside = (tmp_path / "outside").absolute()
+
+    def fake_resolve(path: Path, strict: bool = False) -> Path:
+        if path == artifact_root:
+            return resolved_root
+        return outside
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+
+    with pytest.raises(ValueError, match="outside artifact root"):
+        collector_module._evidence_directory(artifact_root, RUN_ID, "13149768")
+
+
+def test_evidence_path_rejection_warns_without_masking_generic_browser_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    error = PlaceBrowserError(
+        "Place browser state inspection failed",
+        last_url=PLACE_URL.format(place_id="13149768"),
+        html="<html>captured failure</html>",
+    )
+    instance, _, _, _ = collector(tmp_path, [error])
+    monkeypatch.setattr(
+        collector_module,
+        "_evidence_directory",
+        lambda *_args: (_ for _ in ()).throw(ValueError("outside artifact root")),
+    )
+
+    with pytest.warns(RuntimeWarning, match="could not save failure evidence"):
+        with pytest.raises(PlaceBrowserError) as raised:
+            instance.run([target()], RUN_ID, RANK_RUN_ID, RefreshPolicy.MONTHLY)
+
+    assert raised.value is error
+    assert any("could not be saved" in note for note in raised.value.__notes__)
 
 
 def test_final_failure_keeps_previous_effective_version(tmp_path: Path):

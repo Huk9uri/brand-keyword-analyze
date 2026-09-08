@@ -13,7 +13,13 @@ import pymssql
 from .browser import BrowserFactory, PlaceBrowserError
 from .collector import CollectorSummary, PlaceKeywordCollector
 from .config import ConfigError, PlaceKeywordConfig
-from .models import PreviousVersion, RankPlaceTarget, RefreshPolicy
+from .models import (
+    PreviousVersion,
+    RankPlaceTarget,
+    RefreshPolicy,
+    normalize_place_id,
+    normalize_uuid,
+)
 from .parser import KeywordListParser
 from .rank_source import RankResultSource, is_refresh_due
 from .repository import (
@@ -64,7 +70,7 @@ class _PreparedRepository:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="네이버 플레이스 대표키워드 수집")
-    parser.add_argument("--rank-run-id", required=True)
+    parser.add_argument("--rank-run-id", required=True, type=_uuid)
     parser.add_argument("--top-n", type=_top_n, default=10)
     parser.add_argument(
         "--refresh-policy",
@@ -87,7 +93,10 @@ def select_included_targets(
     targets: Sequence[RankPlaceTarget],
     requested_place_ids: Sequence[str],
 ) -> tuple[RankPlaceTarget, ...]:
-    requested = tuple(str(place_id) for place_id in requested_place_ids)
+    try:
+        requested = tuple(normalize_place_id(place_id) for place_id in requested_place_ids)
+    except ValueError:
+        raise CliError("include Place ID must be numeric") from None
     if not requested:
         return tuple(targets)
 
@@ -342,10 +351,17 @@ def _top_n(value: str) -> int:
 
 
 def _place_id(value: str) -> str:
-    parsed = value.strip()
-    if not parsed:
-        raise argparse.ArgumentTypeError("include Place ID must not be empty")
-    return parsed
+    try:
+        return normalize_place_id(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("include Place ID must be numeric") from None
+
+
+def _uuid(value: str) -> str:
+    try:
+        return normalize_uuid(value, "rank-run-id")
+    except ValueError:
+        raise argparse.ArgumentTypeError("rank-run-id must be a UUID") from None
 
 
 __all__ = [

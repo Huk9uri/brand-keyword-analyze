@@ -77,8 +77,29 @@ def test_rank_source_query_limits_successful_organic_results_and_uses_determinis
     assert "is_ad = 0" in query
     assert "organic_rank <= %s" in query
     assert "row_number() over" in query
-    assert "partition by result.place_id" in query
     assert "order by result.organic_rank, result.place_name" in query
+    assert "result.place_id is not null" in query
+    assert "nullif(ltrim(rtrim(result.place_id)), '') is not null" in query
+    assert "partition by ltrim(rtrim(result.place_id))" in query
+
+
+def test_rank_source_trims_place_ids_loaded_from_database():
+    from scripts.place_keyword_collector.rank_source import RankResultSource
+
+    targets = RankResultSource(FakeCursor([(" 13149768 ", "농민백암순대 본점")])).load(
+        RUN_ID,
+        10,
+    )
+
+    assert targets[0].place_id == "13149768"
+
+
+@pytest.mark.parametrize("place_id", [None, "", "   ", "abc", "12/34", "１２３"])
+def test_rank_source_rejects_invalid_naver_place_ids_from_database(place_id):
+    from scripts.place_keyword_collector.rank_source import RankResultSource
+
+    with pytest.raises(ValueError, match="invalid Naver Place ID from rank result"):
+        RankResultSource(FakeCursor([(place_id, "잘못된 매장")])).load(RUN_ID, 10)
 
 
 def test_monthly_refresh_is_due_one_calendar_month_later():

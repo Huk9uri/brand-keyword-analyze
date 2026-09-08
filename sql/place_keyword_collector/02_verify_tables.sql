@@ -474,6 +474,35 @@ IF @verified_column_count <> 19 THROW 51013, 'Place keyword column count mismatc
 IF @verified_constraint_count <> 8 THROW 51014, 'Place keyword constraint count mismatch.', 1;
 IF @verified_index_count <> 7 THROW 51015, 'Place keyword index count mismatch.', 1;
 
+DECLARE @effective_trigger_definition nvarchar(max) = LOWER(
+    OBJECT_DEFINITION(OBJECT_ID(N'dbo.TR_naver_place_keyword_snapshot_validate_effective'))
+);
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.triggers AS triggers
+    WHERE triggers.parent_id = OBJECT_ID(N'dbo.naver_place_keyword_snapshot')
+      AND triggers.name = N'TR_naver_place_keyword_snapshot_validate_effective'
+      AND triggers.is_disabled = 0
+)
+   OR @effective_trigger_definition NOT LIKE N'%effective.place_id <> inserted.place_id%'
+   OR @effective_trigger_definition NOT LIKE N'%effective.collect_status not in (''success'', ''empty'')%'
+    THROW 51016, 'Place keyword effective snapshot invariant trigger mismatch.', 1;
+
+IF EXISTS (
+    SELECT 1
+    FROM dbo.naver_place_keyword_snapshot AS current_snapshot
+    LEFT JOIN dbo.naver_place_keyword_snapshot AS effective
+      ON effective.snapshot_id = current_snapshot.effective_snapshot_id
+    WHERE current_snapshot.effective_snapshot_id IS NOT NULL
+      AND (
+           effective.snapshot_id IS NULL
+        OR effective.place_id <> current_snapshot.place_id
+        OR effective.collect_status NOT IN ('SUCCESS', 'EMPTY')
+      )
+)
+    THROW 51017, 'Existing Place keyword effective snapshot link is invalid.', 1;
+
 SELECT
     DB_NAME() AS database_name,
     @verified_table_count AS verified_table_count,
