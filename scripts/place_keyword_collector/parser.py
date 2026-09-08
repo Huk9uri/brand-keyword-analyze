@@ -248,7 +248,9 @@ class KeywordListParser:
                     continue
                 matching_object_found = True
                 keyword_list = mapping["keywordList"]
-                if isinstance(keyword_list, list):
+                if keyword_list is None:
+                    matching_arrays.append([])
+                elif isinstance(keyword_list, list):
                     matching_arrays.append(keyword_list)
 
         if not matching_arrays:

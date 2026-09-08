@@ -167,6 +167,19 @@ def test_parser_accepts_a_definitive_empty_array():
     assert parsed.keywords == ()
 
 
+def test_parser_treats_matching_null_keyword_list_as_empty():
+    html = """
+    <script type="application/json">
+      {"place":{"id":"13149768","keywordList":null}}
+    </script>
+    """
+
+    parsed = KeywordListParser().parse(html, "13149768")
+
+    assert parsed.place_id == "13149768"
+    assert parsed.keywords == ()
+
+
 def test_parser_distinguishes_missing_keyword_list_from_empty_array():
     with pytest.raises(KeywordListParseError) as caught:
         KeywordListParser().parse(fixture("missing_keyword_list.html"), "13149768")
