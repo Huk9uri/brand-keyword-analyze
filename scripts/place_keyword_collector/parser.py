@@ -78,23 +78,44 @@ def _mappings_from_text(text: str, depth: int) -> Iterator[Mapping[str, Any]]:
     for mapping, _ in _mappings_with_place_context_from_text(
         text,
         depth,
-        frozenset(),
+        inherited_cache_key=None,
+        may_establish_cache_context=True,
     ):
         yield mapping
+
+
+def _single_top_level_place_detail_cache_key(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    cache_keys = tuple(
+        key
+        for key in value
+        if isinstance(key, str) and key.startswith(_APOLLO_PLACE_DETAIL_PREFIX)
+    )
+    if len(cache_keys) != 1:
+        return None
+    return cache_keys[0]
 
 
 def _mappings_with_place_context_from_text(
     text: str,
     depth: int,
-    containing_cache_keys: frozenset[str],
-) -> Iterator[tuple[Mapping[str, Any], frozenset[str]]]:
+    inherited_cache_key: str | None,
+    may_establish_cache_context: bool,
+) -> Iterator[tuple[Mapping[str, Any], str | None]]:
     mappings = [
         candidate
         for value in _json_values(text)
         for candidate in _walk_structures_with_place_context(
             value,
             depth,
-            containing_cache_keys,
+            (
+                _single_top_level_place_detail_cache_key(value)
+                if may_establish_cache_context and isinstance(value, Mapping)
+                else inherited_cache_key
+            ),
+            may_establish_cache_context,
         )
     ]
     if mappings:
@@ -107,7 +128,12 @@ def _mappings_with_place_context_from_text(
             for candidate in _walk_structures_with_place_context(
                 value,
                 depth,
-                containing_cache_keys,
+                (
+                    _single_top_level_place_detail_cache_key(value)
+                    if may_establish_cache_context and isinstance(value, Mapping)
+                    else inherited_cache_key
+                ),
+                may_establish_cache_context,
             ):
                 if candidate in emitted:
                     continue
@@ -119,7 +145,8 @@ def _walk_structures(value: Any, depth: int = 0) -> Iterator[Mapping[str, Any]]:
     for mapping, _ in _walk_structures_with_place_context(
         value,
         depth,
-        frozenset(),
+        cache_key=None,
+        may_establish_cache_context=False,
     ):
         yield mapping
 
@@ -127,32 +154,34 @@ def _walk_structures(value: Any, depth: int = 0) -> Iterator[Mapping[str, Any]]:
 def _walk_structures_with_place_context(
     value: Any,
     depth: int,
-    containing_cache_keys: frozenset[str],
-) -> Iterator[tuple[Mapping[str, Any], frozenset[str]]]:
+    cache_key: str | None,
+    may_establish_cache_context: bool,
+) -> Iterator[tuple[Mapping[str, Any], str | None]]:
     if isinstance(value, Mapping):
-        local_cache_keys = frozenset(
-            key
-            for key in value
-            if isinstance(key, str) and key.startswith(_APOLLO_PLACE_DETAIL_PREFIX)
-        )
-        cache_keys = containing_cache_keys | local_cache_keys
-        yield value, cache_keys
+        yield value, cache_key
         for child in value.values():
-            yield from _walk_structures_with_place_context(child, depth, cache_keys)
+            yield from _walk_structures_with_place_context(
+                child,
+                depth,
+                cache_key,
+                may_establish_cache_context=False,
+            )
         return
     if isinstance(value, list):
         for child in value:
             yield from _walk_structures_with_place_context(
                 child,
                 depth,
-                containing_cache_keys,
+                cache_key,
+                may_establish_cache_context=False,
             )
         return
     if isinstance(value, str) and depth < _MAX_SERIALIZED_DEPTH:
         yield from _mappings_with_place_context_from_text(
             value,
             depth + 1,
-            containing_cache_keys,
+            inherited_cache_key=cache_key,
+            may_establish_cache_context=may_establish_cache_context,
         )
 
 
@@ -187,16 +216,17 @@ class KeywordListParser:
         matching_arrays: list[list[Any]] = []
         expected_cache_key = f"{_APOLLO_PLACE_DETAIL_PREFIX}{expected_place_id}"
         for script in collector.scripts:
-            for mapping, containing_cache_keys in _mappings_with_place_context_from_text(
+            for mapping, cache_key in _mappings_with_place_context_from_text(
                 script,
                 depth=0,
-                containing_cache_keys=frozenset(),
+                inherited_cache_key=None,
+                may_establish_cache_context=True,
             ):
                 if "keywordList" not in mapping:
                     continue
                 candidate_found = True
                 internal_id_matches = str(mapping.get("id")) == str(expected_place_id)
-                cache_key_matches = expected_cache_key in containing_cache_keys
+                cache_key_matches = cache_key == expected_cache_key
                 if not (internal_id_matches or cache_key_matches):
                     continue
                 matching_object_found = True

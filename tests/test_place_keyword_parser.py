@@ -25,19 +25,102 @@ def serialized_payload(payload: object, layers: int) -> str:
     return f"<script>{encoded}</script>"
 
 
+def apollo_state(payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"<script>window.__APOLLO_STATE__ = {encoded};</script>"
+
+
 def test_parser_extracts_target_keyword_list_in_original_order():
     parsed = KeywordListParser().parse(fixture("keyword_list.html"), "13149768")
     assert [item.raw_keyword for item in parsed.keywords] == ["순대", "순댓국", "국밥", "수육"]
     assert [item.keyword_order for item in parsed.keywords] == [1, 2, 3, 4]
 
 
-def test_parser_uses_containing_apollo_place_detail_cache_key():
+def test_parser_uses_single_exact_top_level_apollo_place_detail_cache_key():
     parsed = KeywordListParser().parse(
         fixture("apollo_normalized_keyword_list.html"),
         "13149768",
     )
 
     assert [item.raw_keyword for item in parsed.keywords] == ["순대", "국밥"]
+
+
+def test_parser_does_not_inherit_apollo_identity_from_nested_place_detail_key():
+    html = apollo_state(
+        {
+            "nested": {
+                "PlaceDetailBase:13149768": {"id": "13149768"},
+                "informationTab": {"keywordList": ["wrong"]},
+            }
+        }
+    )
+
+    with pytest.raises(PlaceMismatchError):
+        KeywordListParser().parse(html, "13149768")
+
+
+def test_parser_rejects_one_idless_array_when_top_level_has_multiple_places():
+    html = apollo_state(
+        {
+            "PlaceDetailBase:13149768": {"id": "13149768"},
+            "PlaceDetailBase:99999999": {"id": "99999999"},
+            "ROOT_QUERY": {"informationTab": {"keywordList": ["ambiguous"]}},
+        }
+    )
+
+    with pytest.raises(PlaceMismatchError):
+        KeywordListParser().parse(html, "13149768")
+
+
+def test_parser_rejects_identical_idless_arrays_with_multiple_top_level_places():
+    html = apollo_state(
+        {
+            "PlaceDetailBase:13149768": {"id": "13149768"},
+            "PlaceDetailBase:99999999": {"id": "99999999"},
+            "ROOT_QUERY": {
+                "first": {"keywordList": ["same"]},
+                "second": {"keywordList": ["same"]},
+            },
+        }
+    )
+
+    with pytest.raises(PlaceMismatchError):
+        KeywordListParser().parse(html, "13149768")
+
+
+def test_parser_rejects_conflicting_idless_arrays_with_multiple_top_level_places():
+    html = apollo_state(
+        {
+            "PlaceDetailBase:13149768": {"id": "13149768"},
+            "PlaceDetailBase:99999999": {"id": "99999999"},
+            "ROOT_QUERY": {
+                "first": {"keywordList": ["first"]},
+                "second": {"keywordList": ["second"]},
+            },
+        }
+    )
+
+    with pytest.raises(PlaceMismatchError):
+        KeywordListParser().parse(html, "13149768")
+
+
+def test_parser_accepts_explicit_matching_id_with_multiple_top_level_places():
+    html = apollo_state(
+        {
+            "PlaceDetailBase:13149768": {"id": "13149768"},
+            "PlaceDetailBase:99999999": {"id": "99999999"},
+            "ROOT_QUERY": {
+                "informationTab": {
+                    "id": "13149768",
+                    "keywordList": ["explicit"],
+                }
+            },
+        }
+    )
+
+    parsed = KeywordListParser().parse(html, "13149768")
+
+    assert [item.raw_keyword for item in parsed.keywords] == ["explicit"]
 
 
 def test_parser_does_not_use_photo_cache_keys_or_urls_as_place_identity():
