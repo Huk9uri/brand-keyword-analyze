@@ -2,8 +2,11 @@
 
 ## 목적
 
-네이버 원문 리뷰와 메뉴·운영팀·검색광고 연관어를 결합해 검색량 및 순위 평가 전의
+네이버 원문 리뷰와 메뉴·검색광고 연관어를 결합해 검색량 및 순위 평가 전의
 매장별 키워드 후보를 생성한다. 좌표와 거리는 사용하지 않는다.
+
+운영팀 키워드와 매장별 매출은 후보 원천에서 제외한다. 일부 매장에만 확보되는
+데이터를 사용하면 매장 간 후보 수와 점수가 왜곡될 수 있기 때문이다.
 
 ## 사전 준비
 
@@ -121,6 +124,37 @@ DDL 검증과 dry-run 결과 검토 후에만 `--write`를 추가한다.
 
 `run_id` 단위로 후보와 리뷰 근거가 한 트랜잭션에 저장된다. 어느 한쪽 적재가
 실패하면 해당 실행 전체가 롤백된다.
+
+## 한촌설렁탕 5개 매장 파일럿
+
+매장별 현재 판매 여부를 동일한 품질로 확인할 수 있는 원천이 없으므로, 공식 브랜드
+메뉴를 전 매장 공통 시드로 적용한다. 매장별 차이는 최근 12개월 리뷰에서 확보한다.
+입력 파일은 `inputs/hanchon_keyword_candidate_pilot.json`이다.
+
+- 공식 메뉴 출처: `https://hanchon.kr/new/html/menu_2.html`
+- 공통 메뉴: 설렁탕, 왕갈비탕, 얼큰설렁탕, 도가니탕, 소머리곰탕
+- 제외 원천: 운영팀 키워드, SKYPOS 매출
+- 검색광고 호출: 공통 메뉴 5개로 한 번 호출하고 결과를 모든 대상 매장에 동일 적용
+
+먼저 dry-run을 실행한다.
+
+```powershell
+python -m scripts.keyword_candidate_discovery.batch_cli `
+  --input inputs/hanchon_keyword_candidate_pilot.json `
+  --env-file .env `
+  --expand-searchad `
+  --dry-run
+```
+
+결과 검토 후 실제 적재한다.
+
+```powershell
+python -m scripts.keyword_candidate_discovery.batch_cli `
+  --input inputs/hanchon_keyword_candidate_pilot.json `
+  --env-file .env `
+  --expand-searchad `
+  --write
+```
 
 ## 판정 기준
 

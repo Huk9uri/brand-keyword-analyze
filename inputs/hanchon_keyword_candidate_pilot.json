@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "brand_code": "01",
+  "brand_name": "한촌설렁탕",
+  "as_of": "2026-09-09",
+  "months": 12,
+  "menu_source": {
+    "name": "한촌설렁탕 공식 메뉴안내",
+    "url": "https://hanchon.kr/new/html/menu_2.html",
+    "checked_at": "2026-09-09"
+  },
+  "selection_rule": "공식 메뉴 중 계절·기간 한정 메뉴를 제외하고 대표성과 범용성이 높은 메뉴 5개",
+  "brand_menus": [
+    "설렁탕",
+    "왕갈비탕",
+    "얼큰설렁탕",
+    "도가니탕",
+    "소머리곰탕"
+  ],
+  "excluded_sources": [
+    "운영팀 키워드",
+    "SKYPOS 매출"
+  ],
+  "stores": [
+    {
+      "store_name": "부천본점",
+      "place_id": "12012595"
+    },
+    {
+      "store_name": "강동점",
+      "place_id": "11627699"
+    },
+    {
+      "store_name": "천안쌍용점",
+      "place_id": "17391216"
+    },
+    {
+      "store_name": "선릉역점",
+      "place_id": "31076466"
+    },
+    {
+      "store_name": "수원파장점",
+      "place_id": "34883104"
+    }
+  ]
+}
