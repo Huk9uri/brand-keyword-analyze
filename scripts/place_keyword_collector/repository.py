@@ -40,8 +40,8 @@ INSERT INTO dbo.naver_place_keyword_snapshot (
     collect_msg,
     checked_at
 )
-OUTPUT INSERTED.snapshot_id
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+SELECT CAST(SCOPE_IDENTITY() AS bigint) AS snapshot_id;
 """
 
 RESULT_INSERT_SQL = """

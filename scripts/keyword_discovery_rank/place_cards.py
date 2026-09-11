@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urljoin
 
 from bs4 import BeautifulSoup, Tag
 
@@ -15,6 +15,8 @@ def destination_url(href: str) -> str:
     if parsed.netloc.casefold() == "ader.naver.com":
         destinations = parse_qs(parsed.query).get("fu", ())
         return destinations[0] if destinations else ""
+    if (href or '').startswith('/') and not href.startswith('//'):
+        return urljoin('https://m.place.naver.com', href)
     return href or ""
 
 

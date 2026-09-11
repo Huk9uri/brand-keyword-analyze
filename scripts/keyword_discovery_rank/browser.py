@@ -2,19 +2,23 @@ from __future__ import annotations
 
 import re
 import time
+import logging
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from bs4 import BeautifulSoup
-from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
 from .models import DeviceType, SearchPage, SearchTask
 from .place_cards import semantic_place_cards
+from .place_list import PROFILE as LIST_PROFILE, list_cards, search_url as list_search_url, matches_location, SCROLL_SCRIPT
 
 
 MOBILE_SEARCH_URL = "https://m.search.naver.com/search.naver"
@@ -66,6 +70,10 @@ class SearchPageError(BrowserError):
     """Naver rendered an explicit search error page."""
 
 
+class SecurityCheckRequired(SearchPageError):
+    """사용자 확인이 필요한 보안 화면. 자동 재시도하지 않는다."""
+
+
 class BrowserSessionError(BrowserError):
     """WebDriver failed while creating or operating a browser session."""
 
@@ -86,7 +94,7 @@ def query_matches_url(url: str, requested_query: str) -> bool:
     )
 
 
-def detect_page_state(url: str, html: str, requested_query: str) -> str:
+def detect_page_state(url: str, html: str, requested_query: str, *, require_location: bool = True) -> str:
     """Classify rendered DOM only after the URL proves it belongs to the query."""
 
     if not query_matches_url(url, requested_query):
@@ -105,13 +113,15 @@ def detect_page_state(url: str, html: str, requested_query: str) -> str:
         ):
             non_visible.decompose()
     visible_text = " ".join(soup.stripped_strings)
+    if any(marker in visible_text for marker in ('보안 확인을 완료해 주세요', '실제 사용자인지 확인', '실제 사용자 인증 확인')):
+        return 'SECURITY_CHECK'
     if any(marker in visible_text for marker in ERROR_TEXTS):
         return "ERROR"
     if any(marker in visible_text for marker in NO_RESULT_TEXTS):
         return "NO_RESULT"
-    if LOCATION_UNAVAILABLE_TEXT in visible_text:
+    if require_location and LOCATION_UNAVAILABLE_TEXT in visible_text:
         return "LOCATION_PENDING"
-    if semantic_place_cards(soup) or soup.select_one(RESULT_CARD_SELECTOR) is not None or soup.select_one(DIRECT_PLACE_SELECTOR) is not None:
+    if list_cards(soup) or semantic_place_cards(soup) or soup.select_one(RESULT_CARD_SELECTOR) is not None or soup.select_one(DIRECT_PLACE_SELECTOR) is not None:
         return "RESULTS"
     return "LOADING"
 
@@ -127,6 +137,8 @@ class BrowserSession:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         location_override_active: bool = False,
+        organic_limit: bool = False,
+        profile: TemporaryDirectory | None = None,
     ) -> None:
         self.driver = driver
         self.timeout_seconds = timeout_seconds
@@ -135,11 +147,21 @@ class BrowserSession:
         self._monotonic = monotonic
         self._sleep = sleep
         self.location_override_active = location_override_active
+        self.organic_limit = organic_limit
+        self._profile = profile
         self._last_url = ""
         self._last_html = ""
 
+    def close(self) -> None:
+        try:
+            self.driver.quit()
+        finally:
+            if self._profile is not None:
+                self._profile.cleanup()
+
     def search(self, task: SearchTask) -> SearchPage:
         search_url = _build_search_url(task)
+        is_list = task.location_name == LIST_PROFILE
         deadline = self._monotonic() + self.timeout_seconds
         try:
             self.driver.set_page_load_timeout(self.timeout_seconds)
@@ -165,7 +187,7 @@ class BrowserSession:
         last_state = "LOADING"
         more_control_clicked = False
         location_activated = not (
-            self.location_override_active and _query_requires_location_activation(task)
+            not is_list and self.location_override_active and _query_requires_location_activation(task)
         )
         stable_signature: int | None = None
         stable_polls = 0
@@ -185,8 +207,19 @@ class BrowserSession:
                         )
                     self._sleep(self.poll_interval)
                     continue
-            last_state = detect_page_state(self._last_url, self._last_html, task.query)
+            last_state = detect_page_state(self._last_url, self._last_html, task.query,
+                                           require_location=self.location_override_active and not is_list)
+            if last_state == 'SECURITY_CHECK':
+                raise SecurityCheckRequired('SECURITY_CHECK_REQUIRED', last_url=self._last_url, html=self._last_html)
+            if is_list and not matches_location(self._last_url, task):
+                last_state = 'QUERY_MISMATCH'
             observed_count, end_reached = _result_progress(self._last_html)
+            depth = observed_count
+            if self.organic_limit:
+                from .parser import DomResultParser
+                parsed = DomResultParser().parse(SearchPage(self._last_url, self._last_html,
+                                                            last_state, observed_count, end_reached))
+                depth = sum(not row.is_ad for row in parsed.results)
             signature = observed_count
             if last_state == "RESULTS" and signature == stable_signature:
                 stable_polls += 1
@@ -207,9 +240,10 @@ class BrowserSession:
                 return SearchPage(self._last_url, self._last_html, "NO_RESULT", 0, True)
             if (
                 last_state == "RESULTS"
-                and observed_count < self.result_limit
+                and depth < self.result_limit
                 and not end_reached
                 and not more_control_clicked
+                and not is_list
             ):
                 try:
                     more_control_clicked = self._click_more_results_if_available()
@@ -219,13 +253,16 @@ class BrowserSession:
                 except Exception as exc:
                     raise self._session_error("failed while expanding search results", exc) from exc
             expanded_end_reached = (
-                last_state == "RESULTS"
+                not self.organic_limit
+                and last_state == "RESULTS"
                 and more_control_clicked
                 and stable_polls >= 3
                 and not self._more_results_control_available()
             )
             if last_state == "RESULTS" and (
-                observed_count >= self.result_limit or end_reached or stable_polls >= 3
+                depth >= self.result_limit or end_reached
+                or (not self.organic_limit and stable_polls >= 3)
+                or (self.organic_limit and self._monotonic() >= deadline)
             ):
                 return SearchPage(
                     self._last_url,
@@ -240,13 +277,13 @@ class BrowserSession:
                 message = (
                     "search URL did not match requested query"
                     if exception_type is QueryMismatch
-                    else "search state did not complete before timeout"
+                    else f"search state did not complete before timeout: state={last_state}"
                 )
                 raise exception_type(message, last_url=self._last_url, html=self._last_html)
 
             if last_state == "RESULTS":
                 try:
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    self.driver.execute_script(SCROLL_SCRIPT if is_list else "window.scrollTo(0, document.body.scrollHeight);")
                 except Exception as exc:
                     raise self._session_error("failed while expanding search results", exc) from exc
             self._sleep(self.poll_interval)
@@ -340,12 +377,14 @@ class BrowserFactory:
         result_limit: int = 20,
         poll_interval: float = 0.25,
         driver_builder: Callable[..., Any] | None = None,
+        organic_limit: bool = False,
     ) -> None:
         self.headless = headless
         self.timeout_seconds = timeout_seconds
         self.result_limit = result_limit
         self.poll_interval = poll_interval
-        self._driver_builder = driver_builder or webdriver.Chrome
+        self.organic_limit = organic_limit
+        self._driver_builder = driver_builder or _create_uc_driver
 
     def create(
         self,
@@ -364,8 +403,11 @@ class BrowserFactory:
         else:
             viewport = (1440, 1000)
 
+        profile = None
+        driver = None
         try:
-            driver = self._driver_builder(options=options)
+            profile = TemporaryDirectory(prefix="uc_keyword_rank_")
+            driver = self._driver_builder(options=options, user_data_dir=str(Path(profile.name).resolve()))
             driver.set_window_size(*viewport)
             if latitude is not None and longitude is not None:
                 driver.execute_cdp_cmd(
@@ -382,6 +424,16 @@ class BrowserFactory:
                     {"origin": search_origin, "permissions": ["geolocation"]},
                 )
         except Exception as exc:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            if profile is not None:
+                try:
+                    profile.cleanup()
+                except OSError:
+                    logging.getLogger(__name__).warning('임시 Chrome 프로필 정리 실패: %s', profile.name)
             raise BrowserSessionError(
                 f"failed to create browser session: {exc}",
                 last_url="",
@@ -393,7 +445,43 @@ class BrowserFactory:
             result_limit=self.result_limit,
             poll_interval=self.poll_interval,
             location_override_active=latitude is not None and longitude is not None,
+            organic_limit=self.organic_limit,
+            profile=profile,
         )
+
+
+def _create_uc_driver(*, options: Options, user_data_dir: str) -> Any:
+    import undetected_chromedriver as uc
+
+    uc_options = uc.ChromeOptions()
+    for argument in options.arguments:
+        uc_options.add_argument(argument)
+    uc_options.add_argument("--lang=ko-KR")
+    executable = uc.find_chrome_executable()
+    if not executable:
+        raise RuntimeError('Google Chrome 실행 파일을 찾지 못했습니다')
+    return uc.Chrome(
+        options=uc_options,
+        user_data_dir=user_data_dir,
+        use_subprocess=True,
+        port=0,
+        browser_executable_path=executable,
+        version_main=_chrome_major(executable),
+    )
+
+
+def _chrome_major(executable: str) -> int:
+    if sys.platform == 'win32':
+        escaped = str(Path(executable).resolve()).replace("'", "''")
+        command = ['powershell.exe', '-NoProfile', '-Command',
+                   f"(Get-Item -LiteralPath '{escaped}').VersionInfo.ProductVersion"]
+    else:
+        command = [executable, '--version']
+    result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=10)
+    match = re.search(r'\b(\d+)\.\d+\.\d+\.\d+', result.stdout)
+    if not match:
+        raise RuntimeError('Chrome 버전을 확인할 수 없습니다')
+    return int(match.group(1))
 
 
 def _query_requires_location_activation(task: SearchTask) -> bool:
@@ -408,6 +496,8 @@ def _normalize_query(value: str) -> str:
 
 
 def _build_search_url(task: SearchTask) -> str:
+    if task.location_name == LIST_PROFILE:
+        return list_search_url(task)
     base_url = MOBILE_SEARCH_URL if task.device_type is DeviceType.MOBILE else PC_SEARCH_URL
     parameters = {"where": "m" if task.device_type is DeviceType.MOBILE else "place", "query": task.query}
     return f"{base_url}?{urlencode(parameters)}"
@@ -415,7 +505,7 @@ def _build_search_url(task: SearchTask) -> str:
 
 def _result_progress(html: str) -> tuple[int, bool]:
     soup = BeautifulSoup(html or "", "html.parser")
-    identified_cards = soup.select(RESULT_CARD_SELECTOR)
+    identified_cards = list_cards(soup) or soup.select(RESULT_CARD_SELECTOR)
     count = len(identified_cards) if identified_cards else len(semantic_place_cards(soup))
     direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
     if count == 0 and direct_place is not None:

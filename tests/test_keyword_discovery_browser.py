@@ -190,7 +190,7 @@ class ManualClock:
 def test_factory_sets_viewport_and_geolocation(device_type: DeviceType, viewport: tuple[int, int]):
     driver = FakeDriver()
     captured_options = []
-    factory = BrowserFactory(driver_builder=lambda *, options: captured_options.append(options) or driver)
+    factory = BrowserFactory(driver_builder=lambda *, options, user_data_dir: captured_options.append(options) or driver)
 
     session = factory.create(device_type, 37.5048, 127.0489)
 
@@ -215,7 +215,7 @@ def test_factory_sets_viewport_and_geolocation(device_type: DeviceType, viewport
 
 
 def test_factory_wraps_driver_creation_failure_with_empty_context():
-    def fail_to_create(*, options):
+    def fail_to_create(*, options, user_data_dir):
         raise RuntimeError("chrome missing")
 
     with pytest.raises(BrowserSessionError) as caught:

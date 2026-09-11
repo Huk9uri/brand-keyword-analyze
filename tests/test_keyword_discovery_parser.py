@@ -22,7 +22,7 @@ def test_parser_extracts_mixed_organic_and_ad_cards_in_screen_order():
 
     parsed = DomResultParser().parse(page)
 
-    assert PARSER_VERSION == "dom-v4"
+    assert PARSER_VERSION == "dom-v5"
     assert [row.raw_position for row in parsed.results] == [1, 2, 3, 4]
     assert [row.organic_rank for row in parsed.results] == [1, None, 2, 3]
     assert [row.place_id for row in parsed.results] == ["1001", "9001", "1002", "1003"]
@@ -98,7 +98,7 @@ def test_parser_extracts_supplied_live_mobile_ad_and_organic_cards():
 
     parsed = DomResultParser().parse(page)
 
-    assert PARSER_VERSION == "dom-v4"
+    assert PARSER_VERSION == "dom-v5"
     assert [row.raw_position for row in parsed.results] == [1, 2]
     assert [row.organic_rank for row in parsed.results] == [None, 1]
     assert [row.place_id for row in parsed.results] == ["2089542025", "13149768"]

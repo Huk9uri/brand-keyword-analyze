@@ -1,0 +1,100 @@
+{
+  "bundle": {
+    "schema_version": 1,
+    "as_of_at": "2026-09-09T12:00:00+09:00",
+    "official_menus": [
+      "설렁탕",
+      "왕갈비탕",
+      "얼큰설렁탕",
+      "도가니탕",
+      "소머리곰탕"
+    ],
+    "menu_evidence": "198d73b 및 승인된 한촌 공식 공통 메뉴 5개",
+    "review_as_of": "2026-09-09",
+    "targets": [
+      {
+        "place_id": "12012595",
+        "brand_code": "1",
+        "target_store_id": "EVAL-12012595",
+        "store_name": "부천본점",
+        "operation_status": "UNKNOWN",
+        "identity_evidence": "2026-09-09 조사: 파일럿 입력 Place ID; EVAL 접두는 신규 평가 수집 네임스페이스",
+        "expected_candidate_count": 773
+      },
+      {
+        "place_id": "11627699",
+        "brand_code": "1",
+        "target_store_id": "EVAL-11627699",
+        "store_name": "강동점",
+        "operation_status": "UNKNOWN",
+        "identity_evidence": "2026-09-09 조사: 파일럿 입력 Place ID; EVAL 접두는 신규 평가 수집 네임스페이스",
+        "expected_candidate_count": 768
+      },
+      {
+        "place_id": "17391216",
+        "brand_code": "1",
+        "target_store_id": "EVAL-17391216",
+        "store_name": "천안쌍용점",
+        "operation_status": "UNKNOWN",
+        "identity_evidence": "2026-09-09 조사: 파일럿 입력 Place ID; EVAL 접두는 신규 평가 수집 네임스페이스",
+        "expected_candidate_count": 773
+      },
+      {
+        "place_id": "31076466",
+        "brand_code": "1",
+        "target_store_id": "IYN-000117",
+        "store_name": "선릉역점",
+        "operation_status": "UNKNOWN",
+        "identity_evidence": "2026-09-09 조사: 파일럿 입력 Place ID; EVAL 접두는 신규 평가 수집 네임스페이스",
+        "expected_candidate_count": 769
+      },
+      {
+        "place_id": "34883104",
+        "brand_code": "1",
+        "target_store_id": "EVAL-34883104",
+        "store_name": "수원파장점",
+        "operation_status": "CONFLICT",
+        "identity_evidence": "2026-09-09 조사: 파일럿 입력 Place ID; EVAL 접두는 신규 평가 수집 네임스페이스",
+        "expected_candidate_count": 763
+      }
+    ],
+    "candidate_runs": {
+      "12012595": "72ed626c-072f-4003-8f3e-35b6d9fb8bcb",
+      "11627699": "d8e32c55-a8a0-4bac-9f5f-a3750853b5e1",
+      "17391216": "95ae9fb9-3d82-4621-920a-415a13477def",
+      "31076466": "01d4745e-b193-49d1-a902-79131faa9c51",
+      "34883104": "f9753d07-b2e6-43a8-91e8-bc96534814fc"
+    },
+    "candidates": [],
+    "reviews": [],
+    "volumes": [],
+    "ranks": [],
+    "keyword_snapshots": [],
+    "knowledge": {
+      "version": "pilot-unverified-v1",
+      "evidence": "승인된 공통 메뉴 외 규칙 미확정; 미등록 표현은 UNKNOWN",
+      "intent": {
+        "설렁탕": "DINING",
+        "왕갈비탕": "DINING",
+        "얼큰설렁탕": "DINING",
+        "도가니탕": "DINING",
+        "소머리곰탕": "DINING"
+      },
+      "categories": {},
+      "synonyms": {},
+      "own_place_ids": [
+        "12012595",
+        "11627699",
+        "17391216",
+        "31076466",
+        "34883104"
+      ],
+      "own_registry_complete": false
+    }
+  },
+  "candidate_time_offset": "+09:00",
+  "keyword_time_offset": "+09:00",
+  "keyword_run_time_offsets": {},
+  "rank_runs": [],
+  "verified_volume_periods": []
+}

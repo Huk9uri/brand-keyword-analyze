@@ -227,7 +227,7 @@ def test_immediate_success_persists_matched_final_result_and_closes_browser(tmp_
     assert snapshot.observed_result_count == 1
     assert snapshot.result_end_reached is True
     assert snapshot.final_url == SEARCH_URL
-    assert snapshot.parser_version == "dom-v4"
+    assert snapshot.parser_version == "dom-v5"
     assert results[0].is_own_store is True
     assert results[0].matched_store_id == "S1"
     assert results[0].is_target_store is True
@@ -592,7 +592,7 @@ def test_review_export_writes_success_html_screenshot_and_structured_final_resul
             "longitude": 127.0489,
             "normalized_query": "선릉역 국밥",
             "observed_result_count": 1,
-            "parser_version": "dom-v4",
+            "parser_version": "dom-v5",
             "query": "선릉역 국밥",
             "requested_result_limit": 20,
             "result_end_reached": True,

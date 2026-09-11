@@ -16,6 +16,7 @@ from .browser import (
     NO_RESULT_TEXTS,
     QueryMismatch,
     SearchPageError,
+    SecurityCheckRequired,
     SearchStateTimeout,
     _result_progress as browser_result_progress,
 )
@@ -153,6 +154,11 @@ class KeywordDiscoveryCollector:
                 status = final_attempt.snapshot.collect_status
                 status_counts[status] += 1
 
+                if (final_attempt.snapshot.collect_msg or '').startswith('SECURITY_CHECK_REQUIRED'):
+                    aborted = True
+                    abort_reason = 'SECURITY_CHECK_REQUIRED'
+                    break
+
                 if final_attempt.session_damaged:
                     self._discard_session()
 
@@ -195,7 +201,7 @@ class KeywordDiscoveryCollector:
                 final_attempt = self._browser_failure(task, task_key, run_id, exc)
                 if final_attempt.session_damaged and attempt_number < total_attempts:
                     self._discard_session()
-                if attempt_number < total_attempts:
+                if final_attempt.retryable and attempt_number < total_attempts:
                     record = RetryRecord(
                         attempt=attempt_number,
                         status=final_attempt.snapshot.collect_status,
@@ -309,7 +315,7 @@ class KeywordDiscoveryCollector:
             ),
             results=(),
             html=html,
-            retryable=True,
+            retryable=not isinstance(error, SecurityCheckRequired),
             session_damaged=isinstance(error, BrowserSessionError),
         )
 
