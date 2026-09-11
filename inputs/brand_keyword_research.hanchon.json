@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "brand": "hanchon",
+  "ttl_days": 7,
+  "volume_period": {
+    "period_type": "PROVIDER_MONTHLY",
+    "period_definition": "네이버 키워드 도구 제공 월간검색수(최근 한달). 정확한 시작·종료일 및 갱신 경계는 미제공. 근거: https://ads.naver.com/help/faq/440 (2026-09-09 확인)",
+    "period_start": null,
+    "period_end": null,
+    "period_verified": true
+  },
+  "candidates": [
+    {
+      "id": "galbitang",
+      "query": "갈비탕",
+      "pos_menu_names": [
+        "왕갈비탕"
+      ],
+      "evidence": "승인 메뉴 왕갈비탕의 일반 검색 표현",
+      "condition": "실제 판매 확인; 갈비탕 명칭 전체 POS 매출과 같지 않음"
+    },
+    {
+      "id": "doganitang",
+      "query": "도가니탕",
+      "pos_menu_names": [
+        "도가니탕"
+      ],
+      "evidence": "승인 공통 메뉴",
+      "condition": "현재 판매 확인"
+    },
+    {
+      "id": "samgyetang",
+      "query": "삼계탕",
+      "pos_menu_names": [
+        "누룽지반계탕(한촌)"
+      ],
+      "evidence": "사용자 여름 행사 판매 정보 및 8월 POS 관측",
+      "condition": "계절 행사; POS는 누룽지반계탕만 연결하며 삼계탕 전체 매출 아님"
+    },
+    {
+      "id": "hwangtae",
+      "query": "황태탕",
+      "pos_menu_names": [
+        "사골황태탕"
+      ],
+      "evidence": "8월 POS 탕류",
+      "condition": "일반화한 검색어; 현재 판매 확인"
+    },
+    {
+      "id": "suyuk",
+      "query": "수육전골",
+      "pos_menu_names": [
+        "궁중수육전골"
+      ],
+      "evidence": "8월 POS 요리류",
+      "condition": "일반화한 검색어; 현재 판매 확인"
+    },
+    {
+      "id": "gopchang",
+      "query": "양곱창전골",
+      "pos_menu_names": [
+        "양곱창전골"
+      ],
+      "evidence": "8월 POS 요리류",
+      "condition": "현재 판매 확인"
+    },
+    {
+      "id": "dolpan",
+      "query": "돌판수육",
+      "pos_menu_names": [
+        "돌판수육"
+      ],
+      "evidence": "8월 POS 요리류",
+      "condition": "부분 수집 이력; 미노출 단정 금지"
+    }
+  ],
+  "targets": [
+    {
+      "place_id": "12012595",
+      "target_store_id": "EVAL-12012595",
+      "store_name": "부천본점",
+      "search_location": {
+        "latitude": 37.4835666,
+        "longitude": 126.7654363,
+        "place_id": "12012595",
+        "source": "https://m.place.naver.com/restaurant/12012595/home",
+        "verified_at": "2026-09-09T05:41:07.524111+00:00"
+      }
+    },
+    {
+      "place_id": "11627699",
+      "target_store_id": "EVAL-11627699",
+      "store_name": "강동점",
+      "search_location": {
+        "latitude": 37.5349909,
+        "longitude": 127.1381098,
+        "place_id": "11627699",
+        "source": "https://m.place.naver.com/restaurant/11627699/home",
+        "verified_at": "2026-09-09T05:41:07.990934+00:00"
+      }
+    },
+    {
+      "place_id": "17391216",
+      "target_store_id": "EVAL-17391216",
+      "store_name": "천안쌍용점",
+      "search_location": {
+        "latitude": 36.7997258,
+        "longitude": 127.1300931,
+        "place_id": "17391216",
+        "source": "https://m.place.naver.com/restaurant/17391216/home",
+        "verified_at": "2026-09-09T05:41:08.443036+00:00"
+      }
+    },
+    {
+      "place_id": "31076466",
+      "target_store_id": "IYN-000117",
+      "store_name": "선릉역점",
+      "search_location": {
+        "latitude": 37.5035014,
+        "longitude": 127.0517059,
+        "place_id": "31076466",
+        "source": "naver_place_location/place-location-v1",
+        "verified_at": "2026-09-03T03:07:36+00:00"
+      }
+    },
+    {
+      "place_id": "31103591",
+      "target_store_id": "IYN-000019",
+      "store_name": "신림역점",
+      "search_location": {
+        "latitude": 37.4821471,
+        "longitude": 126.9290636,
+        "place_id": "31103591",
+        "source": "naver_place_location/place-location-v1",
+        "verified_at": "2026-09-03T04:38:42+00:00"
+      }
+    }
+  ]
+}
