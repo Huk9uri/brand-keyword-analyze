@@ -1,0 +1,408 @@
+{
+  "schema_version": 1,
+  "as_of_at": "2026-09-09T01:00:00Z",
+  "targets": [
+    {
+      "place_id": "100",
+      "brand_code": "1",
+      "target_store_id": "S1",
+      "store_name": "합성 매장",
+      "operation_status": "VERIFIED",
+      "identity_evidence": "fixture"
+    }
+  ],
+  "candidate_runs": {
+    "100": "00000000-0000-0000-0000-000000000001"
+  },
+  "candidates": [
+    {
+      "candidate_id": 1,
+      "run_id": "00000000-0000-0000-0000-000000000001",
+      "brand_code": "1",
+      "candidate_scope": "STORE",
+      "place_id": "100",
+      "normalized_keyword": "설렁탕",
+      "from_operation_keyword": false
+    },
+    {
+      "candidate_id": 2,
+      "run_id": "00000000-0000-0000-0000-000000000001",
+      "brand_code": "1",
+      "candidate_scope": "STORE",
+      "place_id": "100",
+      "normalized_keyword": "도가니탕",
+      "from_operation_keyword": false
+    },
+    {
+      "candidate_id": 3,
+      "run_id": "00000000-0000-0000-0000-000000000001",
+      "brand_code": "1",
+      "candidate_scope": "STORE",
+      "place_id": "100",
+      "normalized_keyword": "왕갈비탕",
+      "from_operation_keyword": false
+    },
+    {
+      "candidate_id": 4,
+      "run_id": "00000000-0000-0000-0000-000000000001",
+      "brand_code": "1",
+      "candidate_scope": "STORE",
+      "place_id": "100",
+      "normalized_keyword": "얼큰설렁탕",
+      "from_operation_keyword": false
+    },
+    {
+      "candidate_id": 5,
+      "run_id": "00000000-0000-0000-0000-000000000001",
+      "brand_code": "1",
+      "candidate_scope": "STORE",
+      "place_id": "100",
+      "normalized_keyword": "소머리곰탕",
+      "from_operation_keyword": false
+    }
+  ],
+  "official_menus": [
+    "설렁탕",
+    "도가니탕",
+    "왕갈비탕",
+    "얼큰설렁탕",
+    "소머리곰탕"
+  ],
+  "menu_evidence": "합성 공식 메뉴",
+  "reviews": [],
+  "volumes": [
+    {
+      "request_keyword": "설렁탕",
+      "response_keyword": "설렁탕",
+      "searchad_lookup_key": "설렁탕",
+      "provider": "NAVER_SEARCHAD",
+      "raw_pc": 0,
+      "raw_mobile": 200,
+      "pc_count": 0,
+      "mobile_count": 200,
+      "total_count": 200,
+      "pc_interval": [
+        0,
+        0
+      ],
+      "mobile_interval": [
+        200,
+        200
+      ],
+      "total_interval": [
+        200,
+        200
+      ],
+      "observation_status": "EXACT",
+      "response_json": {
+        "keywordList": [
+          {
+            "relKeyword": "설렁탕",
+            "monthlyPcQcCnt": 0,
+            "monthlyMobileQcCnt": 200
+          }
+        ]
+      },
+      "response_hash": "98c310bc9d512700765286f73ff1e0a089d38c91ee3718c419d615f253ecc4e4",
+      "failure_code": null,
+      "parser_version": "search-volume-v1",
+      "volume_snapshot_id": 1,
+      "fetched_at": "2026-09-09T00:00:00Z",
+      "period_type": "PROVIDER_MONTHLY",
+      "period_definition": "테스트에서 검증한 월간 정의",
+      "period_verified": true
+    },
+    {
+      "request_keyword": "도가니탕",
+      "response_keyword": "도가니탕",
+      "searchad_lookup_key": "도가니탕",
+      "provider": "NAVER_SEARCHAD",
+      "raw_pc": 0,
+      "raw_mobile": 10,
+      "pc_count": 0,
+      "mobile_count": 10,
+      "total_count": 10,
+      "pc_interval": [
+        0,
+        0
+      ],
+      "mobile_interval": [
+        10,
+        10
+      ],
+      "total_interval": [
+        10,
+        10
+      ],
+      "observation_status": "EXACT",
+      "response_json": {
+        "keywordList": [
+          {
+            "relKeyword": "도가니탕",
+            "monthlyPcQcCnt": 0,
+            "monthlyMobileQcCnt": 10
+          }
+        ]
+      },
+      "response_hash": "25a928e42d4e0c66909deae66322c6fa812f60ed902851ece2a5e1f402eceeda",
+      "failure_code": null,
+      "parser_version": "search-volume-v1",
+      "volume_snapshot_id": 2,
+      "fetched_at": "2026-09-09T00:00:00Z",
+      "period_type": "PROVIDER_MONTHLY",
+      "period_definition": "테스트에서 검증한 월간 정의",
+      "period_verified": true
+    },
+    {
+      "request_keyword": "왕갈비탕",
+      "response_keyword": "왕갈비탕",
+      "searchad_lookup_key": "왕갈비탕",
+      "provider": "NAVER_SEARCHAD",
+      "raw_pc": 0,
+      "raw_mobile": 20,
+      "pc_count": 0,
+      "mobile_count": 20,
+      "total_count": 20,
+      "pc_interval": [
+        0,
+        0
+      ],
+      "mobile_interval": [
+        20,
+        20
+      ],
+      "total_interval": [
+        20,
+        20
+      ],
+      "observation_status": "EXACT",
+      "response_json": {
+        "keywordList": [
+          {
+            "relKeyword": "왕갈비탕",
+            "monthlyPcQcCnt": 0,
+            "monthlyMobileQcCnt": 20
+          }
+        ]
+      },
+      "response_hash": "4d9b0dab8e29b394420b9e74dda81db1d523309bb1f763ce47d257ed29f13957",
+      "failure_code": null,
+      "parser_version": "search-volume-v1",
+      "volume_snapshot_id": 3,
+      "fetched_at": "2026-09-09T00:00:00Z",
+      "period_type": "PROVIDER_MONTHLY",
+      "period_definition": "테스트에서 검증한 월간 정의",
+      "period_verified": true
+    },
+    {
+      "request_keyword": "얼큰설렁탕",
+      "response_keyword": "얼큰설렁탕",
+      "searchad_lookup_key": "얼큰설렁탕",
+      "provider": "NAVER_SEARCHAD",
+      "raw_pc": 0,
+      "raw_mobile": 30,
+      "pc_count": 0,
+      "mobile_count": 30,
+      "total_count": 30,
+      "pc_interval": [
+        0,
+        0
+      ],
+      "mobile_interval": [
+        30,
+        30
+      ],
+      "total_interval": [
+        30,
+        30
+      ],
+      "observation_status": "EXACT",
+      "response_json": {
+        "keywordList": [
+          {
+            "relKeyword": "얼큰설렁탕",
+            "monthlyPcQcCnt": 0,
+            "monthlyMobileQcCnt": 30
+          }
+        ]
+      },
+      "response_hash": "d3894c8b1b0d9ad4d73ac3108d60e2f878d884aa11c3f54bd160ad0f04b85e9e",
+      "failure_code": null,
+      "parser_version": "search-volume-v1",
+      "volume_snapshot_id": 4,
+      "fetched_at": "2026-09-09T00:00:00Z",
+      "period_type": "PROVIDER_MONTHLY",
+      "period_definition": "테스트에서 검증한 월간 정의",
+      "period_verified": true
+    },
+    {
+      "request_keyword": "소머리곰탕",
+      "response_keyword": "소머리곰탕",
+      "searchad_lookup_key": "소머리곰탕",
+      "provider": "NAVER_SEARCHAD",
+      "raw_pc": 0,
+      "raw_mobile": 40,
+      "pc_count": 0,
+      "mobile_count": 40,
+      "total_count": 40,
+      "pc_interval": [
+        0,
+        0
+      ],
+      "mobile_interval": [
+        40,
+        40
+      ],
+      "total_interval": [
+        40,
+        40
+      ],
+      "observation_status": "EXACT",
+      "response_json": {
+        "keywordList": [
+          {
+            "relKeyword": "소머리곰탕",
+            "monthlyPcQcCnt": 0,
+            "monthlyMobileQcCnt": 40
+          }
+        ]
+      },
+      "response_hash": "02cf6ca7bd63b8aa79edf37bcaaf020a438f6b317503439b457225f3882ba60d",
+      "failure_code": null,
+      "parser_version": "search-volume-v1",
+      "volume_snapshot_id": 5,
+      "fetched_at": "2026-09-09T00:00:00Z",
+      "period_type": "PROVIDER_MONTHLY",
+      "period_definition": "테스트에서 검증한 월간 정의",
+      "period_verified": true
+    }
+  ],
+  "knowledge": {
+    "version": "fixture-v1",
+    "evidence": "승인된 합성 규칙",
+    "intent": {
+      "설렁탕": "DINING",
+      "도가니탕": "DINING",
+      "왕갈비탕": "DINING",
+      "얼큰설렁탕": "DINING",
+      "소머리곰탕": "DINING"
+    },
+    "categories": {
+      "설렁탕": {
+        "설렁탕": "DIRECT",
+        "카페": "NON_COMPETITOR"
+      }
+    },
+    "synonyms": {},
+    "own_place_ids": [
+      "100"
+    ],
+    "own_registry_complete": true
+  },
+  "ranks": [
+    {
+      "snapshot_id": 10,
+      "run_id": "00000000-0000-0000-0000-000000000002",
+      "task_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "target_store_id": "S1",
+      "normalized_query": "설렁탕",
+      "device_type": "MOBILE",
+      "profile": "MOBILE_NO_LOCATION_V1",
+      "collect_status": "SUCCESS",
+      "collected_at": "2026-09-09T00:00:00Z",
+      "result_end_reached": true,
+      "results": [
+        {
+          "raw_position": 1,
+          "organic_rank": 1,
+          "place_id": "201",
+          "is_ad": false,
+          "category": "설렁탕"
+        },
+        {
+          "raw_position": 2,
+          "organic_rank": 2,
+          "place_id": "202",
+          "is_ad": false,
+          "category": "설렁탕"
+        },
+        {
+          "raw_position": 3,
+          "organic_rank": 3,
+          "place_id": "100",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 4,
+          "organic_rank": 4,
+          "place_id": "204",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 5,
+          "organic_rank": 5,
+          "place_id": "205",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 6,
+          "organic_rank": 6,
+          "place_id": "206",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 7,
+          "organic_rank": 7,
+          "place_id": "207",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 8,
+          "organic_rank": 8,
+          "place_id": "208",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 9,
+          "organic_rank": 9,
+          "place_id": "209",
+          "is_ad": false,
+          "category": "카페"
+        },
+        {
+          "raw_position": 10,
+          "organic_rank": 10,
+          "place_id": "210",
+          "is_ad": false,
+          "category": "카페"
+        }
+      ]
+    }
+  ],
+  "keyword_snapshots": [
+    {
+      "snapshot_id": 1,
+      "effective_snapshot_id": 1,
+      "place_id": "201",
+      "collect_status": "EMPTY",
+      "checked_at": "2026-09-09T00:00:00Z",
+      "keyword_count": 0,
+      "keywords": []
+    },
+    {
+      "snapshot_id": 2,
+      "effective_snapshot_id": 2,
+      "place_id": "202",
+      "collect_status": "EMPTY",
+      "checked_at": "2026-09-09T00:00:00Z",
+      "keyword_count": 0,
+      "keywords": []
+    }
+  ]
+}

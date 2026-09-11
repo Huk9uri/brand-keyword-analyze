@@ -21,6 +21,9 @@ class ValidationOutcome:
 class ResultValidator:
     """Validate the persistable visible prefix and classify its collection status."""
 
+    def __init__(self, *, organic_limit: bool = False):
+        self.organic_limit = organic_limit
+
     def validate(self, parsed: ParsedSearch, requested_limit: int) -> ValidationOutcome:
         if isinstance(requested_limit, bool) or not isinstance(requested_limit, int) or requested_limit <= 0:
             raise ValueError("requested_limit must be a positive integer")
@@ -34,7 +37,16 @@ class ResultValidator:
                 "parsed result count exceeds observed_result_count",
             )
 
-        visible_results = parsed.results[:requested_limit]
+        prefix_length = requested_limit
+        if self.organic_limit:
+            prefix_length = len(parsed.results)
+            organic_count = 0
+            for index, row in enumerate(parsed.results):
+                organic_count += not row.is_ad
+                if organic_count >= requested_limit:
+                    prefix_length = index + 1
+                    break
+        visible_results = parsed.results[:prefix_length]
         invariant_error = _find_invariant_error(visible_results)
         if invariant_error is not None:
             return self._error(observed, invariant_error)
@@ -56,11 +68,13 @@ class ResultValidator:
             messages.append(f"{malformed_count} malformed required card(s)")
 
         expected_visible_count = min(observed, requested_limit)
-        unparsed_count = max(0, expected_visible_count - len(visible_results))
+        unparsed_count = (max(0, observed - len(parsed.results)) if self.organic_limit
+                          else max(0, expected_visible_count - len(visible_results)))
         if unparsed_count:
             messages.append(f"{unparsed_count} rendered card(s) were not parsed")
 
-        reached_requested_limit = observed >= requested_limit
+        reached_requested_limit = (sum(not row.is_ad for row in valid_results) >= requested_limit
+                                   if self.organic_limit else observed >= requested_limit)
         if not reached_requested_limit and not parsed.result_end_reached:
             messages.append("short results were not confirmed by an end marker")
 

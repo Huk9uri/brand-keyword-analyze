@@ -8,7 +8,7 @@ from .models import ParsedResult, ParsedSearch, SearchPage
 from .place_cards import canonical_place_url, is_ad_url, place_id_from_url, semantic_place_cards
 
 
-PARSER_VERSION = "dom-v4"
+PARSER_VERSION = "dom-v5"
 
 RESULT_CARD_SELECTOR = (
     "li[data-nmb_res-doc-id], li[data-nmb_rese-doc-id], "
@@ -36,7 +36,8 @@ class DomResultParser:
 
     def parse(self, page: SearchPage) -> ParsedSearch:
         soup = BeautifulSoup(page.html or "", "html.parser")
-        cards = soup.select(RESULT_CARD_SELECTOR) or semantic_place_cards(soup)
+        from .place_list import list_cards
+        cards = list_cards(soup) or soup.select(RESULT_CARD_SELECTOR) or semantic_place_cards(soup)
         if not cards:
             direct_place = soup.select_one(DIRECT_PLACE_SELECTOR)
             cards = [direct_place] if direct_place is not None else []
