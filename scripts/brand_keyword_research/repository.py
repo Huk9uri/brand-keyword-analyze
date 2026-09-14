@@ -34,6 +34,40 @@ class Repository:
         self.connection, self.env_file = connection, env_file
         self.sales_cache = None
 
+    def prepare(self, config, collect=False, root=None, *, resolver=None):
+        from .all_stores import INVENTORY_SQL, build_inventory, config_from_inventory
+        from scripts.keyword_evaluation.cli import _write
+        from scripts.keyword_evaluation.store_location import validate_location
+        from scripts.keyword_discovery_rank.place_location import PlaceLocationError, PlaceLocationResolver, PlacePageClient
+        inventory = build_inventory(self.query(INVENTORY_SQL), config, datetime.now(timezone.utc))
+        if root is not None:
+            _write(root/'inventory-before.json', inventory)
+        missing = [r for r in inventory if r['status'] == 'LOCATION_MISSING']
+        if collect and missing:
+            if resolver is None:
+                from scripts.keyword_discovery_rank.repository import PlaceLocationRepository
+                location_repository = PlaceLocationRepository(self.connection)
+                location_repository.preflight()
+                resolver = PlaceLocationResolver(location_repository, PlacePageClient())
+            for index, item in enumerate(missing, 1):
+                print(f'매장 좌표 확인 {index}/{len(missing)}: {item["store_code"]}', flush=True)
+                try:
+                    location = resolver.resolve(item['place_id'])
+                    value = dict(place_id=location.place_id, latitude=location.latitude, longitude=location.longitude,
+                                 source=location.resolver_version, verified_at=iso(location.verified_at))
+                    validate_location(value, item['place_id'], datetime.now(timezone.utc))
+                    item.update(status='ELIGIBLE', search_location=value)
+                except (PlaceLocationError, ValueError):
+                    item['status'] = 'LOCATION_RESOLUTION_FAILED'
+                if root is not None:
+                    folder = root/'locations'; folder.mkdir(exist_ok=True)
+                    _write(folder/f'{index:04d}.json', item)
+        return config_from_inventory(config, inventory), inventory
+
+    def rank_observations(self, config, now):
+        from .rank_read import read_rank_observations
+        return read_rank_observations(self.query, config, now)
+
     def query(self, sql, params=()):
         cursor = self.connection.cursor(as_dict=True)
         try:
@@ -96,11 +130,14 @@ class Repository:
             volumes.append(dict(volume_snapshot_id=v['volume_snapshot_id'], provider=v['provider'],
                                 searchad_lookup_key=key, fetched_at=iso(v['fetched_at']),
                                 observation_status=v['observation_status'], total_count=v['total_count'],
+                                pc_count=v['pc_count'], mobile_count=v['mobile_count'],
                                 total_interval=parsed.get('total_interval'), response_json=payload,
                                 period_verified=(v['period_type']==config['volume_period']['period_type']
                                                  and v['period_definition']==config['volume_period']['period_definition']
                                                  and v['period_start'] is None and v['period_end'] is None)))
-        for t in config['targets']:
+        if config.get('scope') == 'ALL_STORES':
+            ranks = self.rank_observations(config, now)
+        for t in ([] if config.get('scope') == 'ALL_STORES' else config['targets']):
             for candidate in config['candidates']:
                 location = t['search_location']
                 rs = self.query("""SELECT TOP 1 snapshot_id,run_id,target_store_id,normalized_query,device_type,
@@ -129,7 +166,7 @@ class Repository:
         from scripts.yuksudang_volume.config import NaverConfig
         from scripts.yuksudang_volume.searchad import SearchAdClient
         from dotenv import dotenv_values
-        needed = list(dict.fromkeys(r['query'] for r in analyze(state)['rows']
+        needed = list(dict.fromkeys(r['query'] for r in analyze(state)['candidates']
                       if r['volume_status'] not in ('EXACT', 'CENSORED', 'NOT_PROVIDED')))
         if needed:
             env = dotenv_values(self.env_file)
@@ -138,6 +175,14 @@ class Repository:
             _write(root/'volume-observations.json', obs)
             _write(root/'volume-receipt.json', VolumeRepository(self.connection).save(obs))
         evaluated = rank_input(state)
+        if state['config'].get('scope') == 'ALL_STORES':
+            from .batch_collection import collect_in_batches
+            env = dotenv_values(self.env_file)
+            browser_config = SimpleNamespace(
+                headless=_parse_bool(env.get('KEYWORD_DISCOVERY_HEADLESS') or 'true', 'HEADLESS'),
+                timeout_seconds=_parse_positive_int(env.get('KEYWORD_DISCOVERY_TIMEOUT_SECONDS') or '30', 'TIMEOUT'))
+            return collect_in_batches(evaluated, self.connection, browser_config, root,
+                                      state['config'].get('batch_size', 100))
         tasks = build_rank_tasks(evaluated)
         _write(root/'rank-plan.json', [dict(query=t.query, target_store_id=t.target_store_id,
                                            latitude=t.latitude, longitude=t.longitude) for t in tasks])

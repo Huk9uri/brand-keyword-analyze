@@ -77,6 +77,7 @@ def collect_ranks(evaluated, connection, config, artifact_root):
                        organic_limit=True),
         DomResultParser(), ResultValidator(organic_limit=True), OwnStoreMatcher(own), repository,
         artifact_root=artifact_root, result_limit=20,
+        request_interval_seconds=30, retry_backoff_seconds=60,
         clock=utc_snapshot_time)
     run_id = str(uuid4())
     from .shared_rank import build_rank_plan
@@ -86,7 +87,7 @@ def collect_ranks(evaluated, connection, config, artifact_root):
                 result_limit_basis='ORGANIC', requested_organic_limit=20,
                 time_offset='+00:00', shared_observations=observations,
                 store_locations={t['target_store_id']: t['search_location'] for t in targets},
-                processed=summary.processed_tasks, aborted=summary.aborted,
+                processed=summary.processed_tasks, aborted=summary.aborted, abort_reason=summary.abort_reason,
                 persistence_failures=summary.persistence_failures,
                 statuses={k.value: v for k,v in summary.status_counts.items()})
 

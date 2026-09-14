@@ -55,6 +55,15 @@ PARTIAL_HTML = """
 """
 
 
+def test_profile_cleanup_failure_stops_instead_of_leaking_next_session(tmp_path):
+    class LockedSession(FakeSession):
+        def close(self):
+            raise PermissionError('profile cleanup exhausted')
+    instance, _, _ = collector(tmp_path, [LockedSession([success_page()])])
+    with pytest.raises(PermissionError, match='profile cleanup exhausted'):
+        instance.run([task()], 'cleanup-failure')
+
+
 def test_collector_progress_uses_semantic_place_cards_without_nmb_identifiers():
     html = (
         Path(__file__).parent
@@ -64,6 +73,18 @@ def test_collector_progress_uses_semantic_place_cards_without_nmb_identifiers():
     ).read_text(encoding="utf-8")
 
     assert _result_progress(html) == (2, False)
+
+
+def test_request_pacing_and_retry_backoff(tmp_path):
+    sleeps = []
+    error = SearchPageError('temporary', last_url=SEARCH_URL, html='')
+    session = FakeSession([error, error, success_page(), success_page()])
+    instance, _, _ = collector(tmp_path, [session])
+    instance.request_interval_seconds = 30
+    instance.retry_backoff_seconds = 60
+    instance._sleep = sleeps.append
+    instance.run([task(), task(2, query='another query')], 'paced')
+    assert sleeps == [30, 60, 120, 30]
 SEARCH_URL = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
 
 

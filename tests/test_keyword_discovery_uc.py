@@ -130,3 +130,75 @@ def test_unknown_chrome_version_fails_before_download(monkeypatch):
                         lambda *args, **kwargs: SimpleNamespace(stdout=''))
     with pytest.raises(RuntimeError):
         _chrome_major('chrome.exe')
+
+
+def test_close_waits_for_browser_before_retrying_locked_profile(monkeypatch, tmp_path):
+    from scripts.keyword_discovery_rank import browser
+    events = []
+    path = tmp_path / 'uc_keyword_rank_test'
+    path.mkdir()
+
+    class Profile:
+        name = str(path)
+        attempts = 0
+        def cleanup(self):
+            events.append('cleanup')
+            self.attempts += 1
+            if self.attempts < 3:
+                raise PermissionError('Chrome still holds a file')
+            path.rmdir()
+
+    class ClosingDriver(Driver):
+        def quit(self): events.append('quit')
+
+    def prepare_wait(driver):
+        events.append('capture')
+        return lambda: events.append('wait')
+
+    monkeypatch.setattr(browser, '_prepare_browser_exit_wait', prepare_wait, raising=False)
+    monkeypatch.setattr(browser.time, 'sleep', lambda seconds: None)
+    profile = Profile()
+    browser.BrowserSession(ClosingDriver(), profile=profile).close()
+    assert events[:3] == ['capture', 'quit', 'wait']
+    assert profile.attempts == 3
+    assert not path.exists()
+
+
+def test_close_records_profile_path_after_exhausted_retries(monkeypatch, caplog):
+    from scripts.keyword_discovery_rank import browser
+    class Profile:
+        name = 'uc_keyword_rank_locked'
+        attempts = 0
+        def cleanup(self):
+            self.attempts += 1
+            raise PermissionError('locked')
+    monkeypatch.setattr(browser.time, 'sleep', lambda seconds: None)
+    profile = Profile()
+    with pytest.raises(PermissionError):
+        browser.BrowserSession(Driver(), profile=profile).close()
+    assert profile.attempts > 1
+    assert profile.name in caplog.text
+
+
+def test_startup_failure_retries_locked_profile(monkeypatch):
+    from scripts.keyword_discovery_rank import browser
+    class Profile:
+        name = 'uc_keyword_rank_startup'
+        attempts = 0
+        def cleanup(self):
+            self.attempts += 1
+            if self.attempts == 1: raise PermissionError('locked')
+    profile = Profile()
+    monkeypatch.setattr(browser, 'TemporaryDirectory', lambda **kwargs: profile)
+    monkeypatch.setattr(browser.time, 'sleep', lambda seconds: None)
+    def fail(**kwargs): raise RuntimeError('startup failed')
+    with pytest.raises(BrowserSessionError, match='startup failed'):
+        BrowserFactory(driver_builder=fail).create(DeviceType.PC, None, None)
+    assert profile.attempts == 2
+
+
+def test_access_limit_is_not_a_retryable_page_error():
+    from scripts.keyword_discovery_rank.browser import detect_page_state
+    assert detect_page_state('https://m.search.naver.com/search.naver?query=test',
+        '<p>과도한 접근 요청으로 서비스 이용이 제한되었습니다. 잠시 후 다시 시도해주세요.</p>',
+        'test') == 'SECURITY_CHECK'

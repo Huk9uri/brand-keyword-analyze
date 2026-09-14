@@ -1,5 +1,6 @@
 """검토 후보 설정으로 브랜드 비교 보고서를 생성한다. 기본은 DB 조회 전용."""
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.keyword_evaluation.cli import _load, _write
@@ -12,6 +13,8 @@ def save_report(root, state):
     _write(root/'input.json', state)
     _write(root/'comparison.json', result)
     (root/'report.md').write_text(report(state, result), encoding='utf-8')
+    from .summary import write_csvs
+    write_csvs(root, state, result, result['keyword_summary'])
     _write(root/'verification.json', dict(input_hash=digest(state), comparison_hash=digest(result),
                                          rank_rows=len(result['rows']), incomplete_rows=result['incomplete_rows']))
     return result
@@ -24,7 +27,16 @@ def execute(config, root, repo, collect=False, start=None, end=None):
     _write(root/'config.json', config)
     stage = 'READ'
     try:
+        inventory = None
+        if config.get('scope') == 'ALL_STORES':
+            stage = 'INVENTORY'
+            config, inventory = repo.prepare(config, collect=collect, root=root)
+            validate_config(config)
+        inventory_at = datetime.now(timezone.utc).isoformat()
+        stage = 'READ'
         state = repo.read(config, start, end)
+        if inventory is not None:
+            state.update(inventory=inventory, inventory_as_of=inventory_at)
         receipt = {}
         if collect:
             _write(root/'before.json', state)
@@ -32,11 +44,15 @@ def execute(config, root, repo, collect=False, start=None, end=None):
             receipt = repo.collect(state, root)
             stage = 'VERIFY_READ'
             state = repo.read(config, start, end)
+            if inventory is not None:
+                state.update(inventory=inventory, inventory_as_of=inventory_at)
         stage = 'REPORT'
         result = save_report(root, state)
-        partial = bool(result['incomplete_rows'] or receipt.get('aborted') or receipt.get('persistence_failures') or result['warnings'])
+        partial = bool(result['incomplete_rows'] or result.get('excluded_stores') or receipt.get('aborted')
+                       or receipt.get('persistence_failures') or result['warnings'])
         _write(root/'status.json', dict(status='PARTIAL' if partial else 'COMPLETE', collected=collect,
-                                       receipt=receipt, incomplete_rows=result['incomplete_rows']))
+                                       receipt=receipt, incomplete_rows=result['incomplete_rows'],
+                                       excluded_stores=result.get('excluded_stores', 0)))
         return 2 if partial else 0
     except Exception as exc:
         _write(root/'status.json', dict(status='FAILED', stage=stage, error_type=type(exc).__name__,
@@ -63,15 +79,24 @@ def main(argv=None):
     parser.add_argument('--end', help='매출 종료일 미포함 YYYY-MM-DD')
     parser.add_argument('--env-file', type=Path, default=Path('.env'))
     parser.add_argument('--collect', action='store_true')
+    parser.add_argument('--all-stores', action='store_true', help='ERP 한촌 운영 매장 전체를 조회하여 집계')
+    parser.add_argument('--batch-size', type=int, default=None, help='전체 매장 순위 수집 배치 크기 1~100 (기본 100)')
     parser.add_argument('--allow-write', action='store_true')
     parser.add_argument('--allow-network', action='store_true')
     args = parser.parse_args(argv)
     if args.replay:
-        if args.collect or args.start or args.end: parser.error('재현은 기간 변경·수집과 함께 사용할 수 없습니다')
+        if args.collect or args.start or args.end or args.all_stores or args.batch_size is not None:
+            parser.error('재현은 기간·매장 범위 변경·수집과 함께 사용할 수 없습니다')
         return replay(args.replay, args.output)
     if args.collect and not (args.allow_write and args.allow_network):
         parser.error('수집에는 --allow-write --allow-network가 필요합니다')
-    config = _load(args.config); validate_config(config)
+    config = _load(args.config)
+    if args.all_stores:
+        config['scope'] = 'ALL_STORES'
+    if args.batch_size is not None:
+        if config.get('scope') != 'ALL_STORES': parser.error('--batch-size는 전체 매장 모드에서 사용합니다')
+        config['batch_size'] = args.batch_size
+    validate_config(config)
     if args.output.exists(): parser.error('새 출력 경로를 지정하세요')
     from scripts.keyword_evaluation.cli import _connection
     from .repository import Repository

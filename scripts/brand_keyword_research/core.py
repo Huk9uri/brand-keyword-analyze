@@ -16,7 +16,12 @@ def validate_config(c):
     if type(c.get('ttl_days')) is not int or not 1 <= c['ttl_days'] <= 30:
         raise ValueError('ttl_days는 1~30 정수')
     candidates, targets = c.get('candidates', []), c.get('targets', [])
-    if not 1 <= len(candidates) <= 20 or not targets or len(candidates)*len(targets) > 100:
+    scope = c.get('scope', 'CONFIGURED')
+    if scope not in ('CONFIGURED', 'ALL_STORES'):
+        raise ValueError('지원 조사 범위: CONFIGURED, ALL_STORES')
+    if type(c.get('batch_size', 100)) is not int or not 1 <= c.get('batch_size', 100) <= 100:
+        raise ValueError('배치 크기는 1~100 정수')
+    if not 1 <= len(candidates) <= 20 or (scope == 'CONFIGURED' and (not targets or len(candidates)*len(targets) > 100)):
         raise ValueError('후보 1~20개, 순위 조사 최대 100건')
     for field, items in [('id', candidates), ('place_id', targets), ('target_store_id', targets)]:
         values = [r.get(field) for r in items]
@@ -81,7 +86,7 @@ def analyze(s):
     for target in c['targets']:
         validate_location(target['search_location'], target['place_id'], as_of)
     sales = {r['menu_name']: r for r in s['sales']['rows']}
-    rows = []
+    rows, metrics = [], []
     for candidate in c['candidates']:
         query = candidate['query']; menus = candidate['pos_menu_names']
         matched = [sales[m] for m in menus if m in sales]
@@ -94,6 +99,14 @@ def analyze(s):
         vs = 'MISSING' if volume is None else volume['observation_status']
         if volume and not freshness(volume, as_of, 'fetched_at', c['ttl_days']): vs = 'STALE'
         if volume and not volume.get('period_verified'): vs = 'UNVERIFIED'
+        metrics.append(dict(candidate_id=candidate['id'], query=query, sales_amount=amount,
+                            sales_status=sales_status, volume_status=vs,
+                            volume_total=volume.get('total_count') if volume else None,
+                            volume_pc=volume.get('pc_count') if volume else None,
+                            volume_mobile=volume.get('mobile_count') if volume else None,
+                            volume_interval=volume.get('total_interval') if volume else None,
+                            volume_at=volume['fetched_at'] if volume else None,
+                            volume_snapshot_id=volume['volume_snapshot_id'] if volume else None))
         for target in c['targets']:
             rank = select_rank(s['ranks'], target, query, as_of, profile=LIST_PROFILE)
             valid = _reusable_rank(evaluated, {'query': query}, target)
@@ -105,7 +118,8 @@ def analyze(s):
             visibility = ('OBSERVED' if own else 'NOT_IN_TOP20' if len(organic) >= 20 else
                           'NOT_OBSERVED_IN_COMPLETE_LIST' if valid else 'UNKNOWN')
             rows.append(dict(candidate_id=candidate['id'], query=query, store_name=target['store_name'],
-                             place_id=target['place_id'], sales_amount=amount, sales_status=sales_status,
+                             place_id=target['place_id'], store_code=target.get('store_code'),
+                             target_store_id=target['target_store_id'], sales_amount=amount, sales_status=sales_status,
                              sales_menus=matched, volume_status=vs,
                              volume_total=volume.get('total_count') if volume else None,
                              volume_interval=volume.get('total_interval') if volume else None,
@@ -118,7 +132,14 @@ def analyze(s):
                              evidence=candidate['evidence'], condition=candidate['condition']))
     missing = sum(r['rank_status'] != 'VALID' or r['volume_status'] not in ('EXACT', 'CENSORED', 'NOT_PROVIDED')
                   or r['sales_status'] not in ('OBSERVED', 'NOT_LINKED') for r in rows)
-    return {'rows': rows, 'incomplete_rows': missing, 'warnings': s['sales']['warnings']}
+    result = {'rows': rows, 'candidates': metrics, 'incomplete_rows': missing, 'warnings': list(s['sales']['warnings'])}
+    from .summary import summarize
+    result['keyword_summary'] = summarize(s, result)
+    if 'inventory' in s:
+        result['excluded_stores'] = sum(t['status'] != 'ELIGIBLE' for t in s['inventory'])
+        if not s['inventory']:
+            result['warnings'].append('운영 매장 모집단이 비어 있다. 전체 매장 조회 조건과 원천을 확인하세요.')
+    return result
 
 
 def cell(value):
@@ -131,18 +152,30 @@ def report(s, result):
              f"매출 기간: {sales['start']} 이상 ~ {sales['end']} 미만 / 원천 최신일: {sales['latest_date']}",
              f"POS 관측 매장: {sales.get('stores', '미확인')}개 / 관측 날짜: {sales.get('days', '미확인')}일", '',
              '검토된 후보의 비교 자료다. 자동 추천·등록·유입 증가 검증 결과가 아니다. 매출은 SC_AMT_TTL 합계이며 회계 확정 순매출·이익이 아니다.',
-             'POS 매출은 브랜드 관측 범위, 순위는 설정된 표본 매장 좌표 기준이다. 각 매장의 실제 메뉴 판매를 보장하지 않는다.', '',
+             ('POS 매출은 브랜드 관측 범위, 순위는 ERP 운영 매장 중 ID·좌표가 확인된 매장 기준이다.'
+              if s['config'].get('scope') == 'ALL_STORES' else 'POS 매출은 브랜드 관측 범위, 순위는 설정된 표본 매장 좌표 기준이다.')
+             + ' 각 매장의 실제 메뉴 판매를 보장하지 않는다.', '',
              '## 후보 비교', '', '| 검색어 | POS 금액 | 검색량 / 상태 | 자사 TOP10 | TOP20 | 미확인 매장 | 적용 조건 |',
              '|---|---:|---|---:|---:|---:|---|']
     for candidate in s['config']['candidates']:
-        rows = [r for r in result['rows'] if r['candidate_id'] == candidate['id']]; r = rows[0]
+        rows = [r for r in result['rows'] if r['candidate_id'] == candidate['id']]
+        r = next(m for m in result['candidates'] if m['candidate_id'] == candidate['id'])
         valid = [x for x in rows if x['rank_status'] == 'VALID']
         a = sum(x['own_rank'] is not None and x['own_rank'] <= 10 for x in valid)
-        b = sum(x['own_rank'] is not None for x in valid)
+        b = sum(x['own_rank'] is not None and x['own_rank'] <= 20 for x in valid)
+        summary = next(x for x in result['keyword_summary'] if x['candidate_id'] == candidate['id'])
         volume = f"{r['volume_total']:,}" if r['volume_status'] == 'EXACT' else '~'.join(map(str,r['volume_interval'])) if r['volume_status'] == 'CENSORED' and r['volume_interval'] else '미확인'
         lines.append('| '+' | '.join(map(cell, [candidate['query'], f"{Decimal(r['sales_amount']):,.0f}원" if r['sales_amount'] is not None else r['sales_status'],
                      volume+' / '+r['volume_status'], f'{a}/{len(valid)}' if valid else '산정 불가',
-                     f'{b}/{len(valid)}' if valid else '산정 불가', len(rows)-len(valid), candidate['condition']]))+' |')
+                     f'{b}/{len(valid)}' if valid else '산정 불가', summary['unknown_stores'], candidate['condition']]))+' |')
+    from .summary import summary_markdown
+    lines += ['', summary_markdown(result['keyword_summary'])]
+    if 'inventory' in s:
+        lines += ['## 전체 매장 명단과 조사 가능 여부', '',
+                  f"모집단 조회 시각: {s.get('inventory_as_of', s['as_of_at'])}", '',
+                  '| 매장 코드 | 매장 | Place ID | 조사 상태 |', '|---|---|---|---|']
+        for item in s['inventory']:
+            lines.append('| '+' | '.join(map(cell, [item['store_code'], item['store_name'], item['place_id'] or '없음', item['status']]))+' |')
     lines += ['', 'TOP10·TOP20 분모는 유효하게 수집된 매장 수다. 검색량은 최근 한 달 검색광고 도구 값으로 식당 방문 수가 아니며, 구간값·자료 없음·미노출을 0으로 치환하지 않는다.', '',
               '## 매장별 관측', '', '| 검색어 | 매장 | 자사 순위 / 판정 | 상태 | 순위 시각 | 검색량 시각 |', '|---|---|---|---|---|---|']
     for r in result['rows']:

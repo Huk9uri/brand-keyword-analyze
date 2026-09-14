@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -93,6 +95,9 @@ class KeywordDiscoveryCollector:
         review_export: bool = False,
         redact: Callable[[str], str] = lambda value: value,
         retry_logger: Callable[[str], None] = lambda value: None,
+        request_interval_seconds: float = 0,
+        retry_backoff_seconds: float = 0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if (
             isinstance(result_limit, bool)
@@ -106,6 +111,12 @@ class KeywordDiscoveryCollector:
             raise ValueError("failure_limit must be a positive integer")
 
         self.browser_factory = browser_factory
+        for delay in (request_interval_seconds, retry_backoff_seconds):
+            if not math.isfinite(delay) or delay < 0:
+                raise ValueError('request delays must be finite and non-negative')
+        self.request_interval_seconds = request_interval_seconds
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self._sleep = sleep
         self.parser = parser
         self.validator = validator
         self.matcher = matcher
@@ -194,6 +205,11 @@ class KeywordDiscoveryCollector:
         retry_history: list[RetryRecord] = []
 
         for attempt_number in range(1, total_attempts + 1):
+            delay = self.request_interval_seconds
+            if attempt_number > 1:
+                delay = max(delay, self.retry_backoff_seconds * 2 ** (attempt_number - 2))
+            if delay:
+                self._sleep(delay)
             try:
                 session = self._ensure_session(task)
                 page = session.search(task)
@@ -433,6 +449,9 @@ class KeywordDiscoveryCollector:
         if callable(close):
             try:
                 close()
+            except OSError:
+                # 프로필 삭제 재시도가 소진되면 다음 프로필을 만들지 않는다.
+                raise
             except Exception:
                 pass
             else:

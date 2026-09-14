@@ -23,6 +23,58 @@ from .place_list import PROFILE as LIST_PROFILE, list_cards, search_url as list_
 
 MOBILE_SEARCH_URL = "https://m.search.naver.com/search.naver"
 PC_SEARCH_URL = "https://search.naver.com/search.naver"
+
+
+def _prepare_browser_exit_wait(driver: Any) -> Callable[[], None]:
+    """종료 전에 소유 브라우저 핸들을 열어 PID 재사용 없이 종료를 기다린다."""
+    pid = getattr(driver, 'browser_pid', None)
+    if sys.platform != 'win32' or not isinstance(pid, int) or pid <= 0:
+        return lambda: None
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        logging.getLogger(__name__).warning('Chrome 종료 대기 핸들 열기 실패: pid=%s error=%s', pid, ctypes.get_last_error())
+        return lambda: None
+
+    def wait() -> None:
+        try:
+            result = kernel.WaitForSingleObject(handle, 5000)
+            if result != 0:
+                logging.getLogger(__name__).warning('Chrome 종료 대기 미완료: pid=%s result=%s', pid, result)
+        finally:
+            kernel.CloseHandle(handle)
+    return wait
+
+
+def _cleanup_profile(profile: TemporaryDirectory) -> None:
+    """Windows 파일 잠금 해제를 기다리고 최종 실패 경로를 기록한다."""
+    for attempt in range(6):
+        try:
+            profile.cleanup()
+            return
+        except OSError:
+            if attempt == 5:
+                logging.getLogger(__name__).exception('임시 Chrome 프로필 정리 최종 실패: %s', profile.name)
+                raise
+            time.sleep(0.5)
+
+
+def _quit_and_wait(driver: Any) -> None:
+    wait = _prepare_browser_exit_wait(driver)
+    try:
+        driver.quit()
+    finally:
+        wait()
+
+
 MOBILE_USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
@@ -113,7 +165,8 @@ def detect_page_state(url: str, html: str, requested_query: str, *, require_loca
         ):
             non_visible.decompose()
     visible_text = " ".join(soup.stripped_strings)
-    if any(marker in visible_text for marker in ('보안 확인을 완료해 주세요', '실제 사용자인지 확인', '실제 사용자 인증 확인')):
+    if any(marker in visible_text for marker in ('보안 확인을 완료해 주세요', '실제 사용자인지 확인', '실제 사용자 인증 확인',
+                                                '서비스 이용이 제한되었습니다', '과도한 접근 요청')):
         return 'SECURITY_CHECK'
     if any(marker in visible_text for marker in ERROR_TEXTS):
         return "ERROR"
@@ -154,10 +207,10 @@ class BrowserSession:
 
     def close(self) -> None:
         try:
-            self.driver.quit()
+            _quit_and_wait(self.driver)
         finally:
             if self._profile is not None:
-                self._profile.cleanup()
+                _cleanup_profile(self._profile)
 
     def search(self, task: SearchTask) -> SearchPage:
         search_url = _build_search_url(task)
@@ -426,12 +479,12 @@ class BrowserFactory:
         except Exception as exc:
             if driver is not None:
                 try:
-                    driver.quit()
+                    _quit_and_wait(driver)
                 except Exception:
                     pass
             if profile is not None:
                 try:
-                    profile.cleanup()
+                    _cleanup_profile(profile)
                 except OSError:
                     logging.getLogger(__name__).warning('임시 Chrome 프로필 정리 실패: %s', profile.name)
             raise BrowserSessionError(

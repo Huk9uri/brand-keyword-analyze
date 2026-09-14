@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "brand": "hanchon",
+  "ttl_days": 7,
+  "volume_period": {
+    "period_type": "PROVIDER_MONTHLY",
+    "period_definition": "네이버 키워드 도구 제공 월간검색수(최근 한달). 정확한 시작·종료일 및 갱신 경계는 미제공. 근거: https://ads.naver.com/help/faq/440 (2026-09-09 확인)",
+    "period_start": null,
+    "period_end": null,
+    "period_verified": true
+  },
+  "candidates": [
+    {
+      "id": "expanded_01",
+      "query": "양곰탕",
+      "pos_menu_names": [
+        "양곰탕"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_02",
+      "query": "뚝배기불고기",
+      "pos_menu_names": [
+        "뚝배기불고기"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_03",
+      "query": "소머리곰탕",
+      "pos_menu_names": [
+        "소머리곰탕(구.곤지암곰탕)"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_04",
+      "query": "갈비찜",
+      "pos_menu_names": [
+        "왕갈비찜中",
+        "왕갈비찜大"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_05",
+      "query": "매운갈비찜",
+      "pos_menu_names": [
+        "마왕갈비찜中",
+        "마왕갈비찜大",
+        "매운갈비찜"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_06",
+      "query": "수육",
+      "pos_menu_names": [
+        "돌판수육",
+        "돌판수육(소)",
+        "맛수육"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_07",
+      "query": "수육전골",
+      "pos_menu_names": [
+        "궁중수육전골"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_08",
+      "query": "설렁탕",
+      "pos_menu_names": [
+        "설렁탕"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    },
+    {
+      "id": "expanded_09",
+      "query": "갈비탕",
+      "pos_menu_names": [
+        "왕갈비탕"
+      ],
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분"
+    }
+  ],
+  "targets": [
+    {
+      "place_id": "12012595",
+      "target_store_id": "EVAL-12012595",
+      "store_name": "부천본점",
+      "search_location": {
+        "latitude": 37.4835666,
+        "longitude": 126.7654363,
+        "place_id": "12012595",
+        "source": "https://m.place.naver.com/restaurant/12012595/home",
+        "verified_at": "2026-09-09T05:41:07.524111+00:00"
+      }
+    },
+    {
+      "place_id": "11627699",
+      "target_store_id": "EVAL-11627699",
+      "store_name": "강동점",
+      "search_location": {
+        "latitude": 37.5349909,
+        "longitude": 127.1381098,
+        "place_id": "11627699",
+        "source": "https://m.place.naver.com/restaurant/11627699/home",
+        "verified_at": "2026-09-09T05:41:07.990934+00:00"
+      }
+    },
+    {
+      "place_id": "17391216",
+      "target_store_id": "EVAL-17391216",
+      "store_name": "천안쌍용점",
+      "search_location": {
+        "latitude": 36.7997258,
+        "longitude": 127.1300931,
+        "place_id": "17391216",
+        "source": "https://m.place.naver.com/restaurant/17391216/home",
+        "verified_at": "2026-09-09T05:41:08.443036+00:00"
+      }
+    },
+    {
+      "place_id": "31076466",
+      "target_store_id": "IYN-000117",
+      "store_name": "선릉역점",
+      "search_location": {
+        "latitude": 37.5035014,
+        "longitude": 127.0517059,
+        "place_id": "31076466",
+        "source": "naver_place_location/place-location-v1",
+        "verified_at": "2026-09-03T03:07:36+00:00"
+      }
+    },
+    {
+      "place_id": "31103591",
+      "target_store_id": "IYN-000019",
+      "store_name": "신림역점",
+      "search_location": {
+        "latitude": 37.4821471,
+        "longitude": 126.9290636,
+        "place_id": "31103591",
+        "source": "naver_place_location/place-location-v1",
+        "verified_at": "2026-09-03T04:38:42+00:00"
+      }
+    }
+  ],
+  "scope": "ALL_STORES"
+}
