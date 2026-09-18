@@ -18,6 +18,18 @@ def large_state(count=205):
     return s
 
 
+def grouped_state(store_count=2, keyword_count=34):
+    s = large_state(store_count)
+    template = s['config']['candidates'][0]
+    s['config']['candidates'] = [
+        {**template, 'id': f'keyword-{i:02d}', 'query': f'검색어 {i:02d}'}
+        for i in range(keyword_count)
+    ]
+    evaluated = rank_input(s)
+    evaluated['collection_queue'].sort(key=lambda row: row['target_place_id'])
+    return evaluated
+
+
 def test_205_tasks_split_without_duplicates_or_dropped_stores(tmp_path):
     from scripts.brand_keyword_research.batch_collection import collect_in_batches
     seen = []
@@ -29,6 +41,89 @@ def test_205_tasks_split_without_duplicates_or_dropped_stores(tmp_path):
     assert len(seen) == len(set(seen)) == 205
     assert result['remaining'] == 0
     assert len(list(tmp_path.glob('batch-*/receipt.json'))) == 3
+
+
+def test_grouped_batches_do_not_split_store_that_fits_limit(tmp_path):
+    from scripts.brand_keyword_research.batch_collection import collect_in_batches
+    sizes = []
+
+    def collect(evaluated, *args):
+        queue = evaluated['collection_queue']
+        sizes.append(len(queue))
+        return {'processed': len(queue), 'aborted': False, 'persistence_failures': 0}
+
+    result = collect_in_batches(
+        grouped_state(), None, None, tmp_path, 50,
+        collect_fn=collect, group_key=lambda row: row['target_place_id'],
+    )
+
+    assert sizes == [34, 34]
+    assert result['boundary_splits'] == 0
+
+
+def test_group_larger_than_limit_splits_without_drops_or_duplicates(tmp_path):
+    from scripts.brand_keyword_research.batch_collection import collect_in_batches
+    seen = []
+    sizes = []
+
+    def collect(evaluated, *args):
+        queue = evaluated['collection_queue']
+        sizes.append(len(queue))
+        seen.extend(row['candidate_id'] for row in queue)
+        return {'processed': len(queue), 'aborted': False, 'persistence_failures': 0}
+
+    result = collect_in_batches(
+        grouped_state(store_count=1, keyword_count=67), None, None, tmp_path, 50,
+        collect_fn=collect, group_key=lambda row: row['target_place_id'],
+    )
+
+    assert sizes == [50, 17]
+    assert len(seen) == len(set(seen)) == 67
+    assert result['boundary_splits'] == 1
+
+
+def test_batch_receipt_sums_collector_metrics(tmp_path):
+    from scripts.brand_keyword_research.batch_collection import collect_in_batches
+
+    def collect(evaluated, *args):
+        size = len(evaluated['collection_queue'])
+        return {
+            'processed': size,
+            'aborted': False,
+            'persistence_failures': 0,
+            'metrics': {
+                'browser_create_count': 1,
+                'browser_close_count': 1,
+                'search_attempt_count': size,
+                'retry_count': 0,
+                'damaged_restart_count': 0,
+                'profile_change_restart_count': 0,
+                'browser_create_seconds': 2.5,
+                'browser_close_seconds': 1.5,
+                'search_seconds': size * 3.0,
+                'explicit_wait_seconds': size * 15.0,
+                'total_elapsed_seconds': size * 18.0 + 4.0,
+            },
+        }
+
+    result = collect_in_batches(
+        grouped_state(), None, None, tmp_path, 50,
+        collect_fn=collect, group_key=lambda row: row['target_place_id'],
+    )
+
+    assert result['metrics'] == {
+        'browser_create_count': 2,
+        'browser_close_count': 2,
+        'search_attempt_count': 68,
+        'retry_count': 0,
+        'damaged_restart_count': 0,
+        'profile_change_restart_count': 0,
+        'browser_create_seconds': 5.0,
+        'browser_close_seconds': 3.0,
+        'search_seconds': 204.0,
+        'explicit_wait_seconds': 1020.0,
+        'total_elapsed_seconds': 1232.0,
+    }
 
 
 @pytest.mark.parametrize('receipt', [

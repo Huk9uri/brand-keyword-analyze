@@ -1,0 +1,40 @@
+{
+  "batch_size": 50,
+  "brand": "hanchon",
+  "candidates": [
+    {
+      "condition": "매장 좌표 기준 순위 조회. 메뉴 판매 근거와 실제 제공 여부를 구분",
+      "evidence": "2026-09-11 매출·검색량 보강 조사 및 사용자 승인",
+      "id": "expanded_08",
+      "pos_menu_names": [
+        "설렁탕"
+      ],
+      "query": "설렁탕"
+    }
+  ],
+  "scope": "CONFIGURED",
+  "targets": [
+    {
+      "place_id": "36680795",
+      "search_location": {
+        "latitude": 37.2657471,
+        "longitude": 127.027969,
+        "place_id": "36680795",
+        "source": "place-location-v1",
+        "verified_at": "2026-09-11T05:36:14+00:00"
+      },
+      "store_code": "000110",
+      "store_name": "한촌설렁탕 수원인계점",
+      "target_store_id": "IYN-000110"
+    }
+  ],
+  "ttl_days": 7,
+  "version": 1,
+  "volume_period": {
+    "period_definition": "네이버 키워드 도구 제공 월간검색수(최근 한달). 정확한 시작·종료일 및 갱신 경계는 미제공. 근거: https://ads.naver.com/help/faq/440 (2026-09-09 확인)",
+    "period_end": null,
+    "period_start": null,
+    "period_type": "PROVIDER_MONTHLY",
+    "period_verified": true
+  }
+}

@@ -1,0 +1,285 @@
+{
+  "version": 1,
+  "brand": "hanchon",
+  "mapping_version": "2026-09-16-v1",
+  "rank_ttl_days": 7,
+  "volume_ttl_days": 7,
+  "volume_period": {
+    "period_definition": "네이버 키워드 도구 제공 월간검색수(최근 한달). 정확한 시작·종료일 및 갱신 경계는 미제공. 근거: https://ads.naver.com/help/faq/440 (2026-09-09 확인)",
+    "period_end": null,
+    "period_start": null,
+    "period_type": "PROVIDER_MONTHLY",
+    "period_verified": true
+  },
+  "candidates": [
+    {
+      "query": "돼지갈비",
+      "pos_menu_names": [
+        "돼지갈비",
+        "왕돼지갈비"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "해장국",
+      "pos_menu_names": [
+        "우거지해장국"
+      ],
+      "condition": "관련 메뉴 판매 실적 확인. 상위 검색 결과와 실제 메뉴 적합성 검토 필요"
+    },
+    {
+      "query": "냉면",
+      "pos_menu_names": [
+        "물냉면",
+        "비빔냉면",
+        "해장 물비빔냉면"
+      ],
+      "condition": "관련 메뉴 판매 실적 확인. 상위 검색 결과와 실제 메뉴 적합성 검토 필요"
+    },
+    {
+      "query": "만두",
+      "pos_menu_names": [
+        "수만두(대)",
+        "수만두(소)",
+        "갈비만두(小)",
+        "갈비만두(大)",
+        "김치만두(소)",
+        "김치만두(대)"
+      ],
+      "condition": "관련 메뉴 판매 실적 확인. 상위 검색 결과와 실제 메뉴 적합성 검토 필요"
+    },
+    {
+      "query": "소고기미역국",
+      "pos_menu_names": [
+        "설렁탕집소고기미역국"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "도가니탕",
+      "pos_menu_names": [
+        "도가니탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "불고기",
+      "pos_menu_names": [
+        "불고기",
+        "뚝배기불고기"
+      ],
+      "condition": "관련 메뉴 판매 실적 확인. 상위 검색 결과와 실제 메뉴 적합성 검토 필요"
+    },
+    {
+      "query": "김치전",
+      "pos_menu_names": [
+        "김치전"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "황태해장국",
+      "pos_menu_names": [
+        "사골황태탕"
+      ],
+      "condition": "관련 메뉴 판매 실적 확인. 상위 검색 결과와 실제 메뉴 적합성 검토 필요"
+    },
+    {
+      "query": "떡국",
+      "pos_menu_names": [
+        "떡국설렁탕"
+      ],
+      "condition": "관련 메뉴 판매 실적 확인. 상위 검색 결과와 실제 메뉴 적합성 검토 필요"
+    },
+    {
+      "query": "왕갈비탕",
+      "pos_menu_names": [
+        "왕갈비탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "우거지해장국",
+      "pos_menu_names": [
+        "우거지해장국"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "김치만두",
+      "pos_menu_names": [
+        "김치만두(소)",
+        "김치만두(대)"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "갈비만두",
+      "pos_menu_names": [
+        "갈비만두(小)",
+        "갈비만두(大)"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "비빔냉면",
+      "pos_menu_names": [
+        "비빔냉면"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "물냉면",
+      "pos_menu_names": [
+        "물냉면"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "반계탕",
+      "pos_menu_names": [
+        "누룽지반계탕(한촌)"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "불고기정식",
+      "pos_menu_names": [
+        "불고기정식"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "황태탕",
+      "pos_menu_names": [
+        "사골황태탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "얼큰설렁탕",
+      "pos_menu_names": [
+        "얼큰설렁탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "누룽지반계탕",
+      "pos_menu_names": [
+        "누룽지반계탕(한촌)"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "만두설렁탕",
+      "pos_menu_names": [
+        "수만두설렁탕",
+        "김치만두설렁탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "떡국설렁탕",
+      "pos_menu_names": [
+        "떡국설렁탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "얼큰도가니탕",
+      "pos_menu_names": [
+        "얼큰도가니탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "특설렁탕",
+      "pos_menu_names": [
+        "특설렁탕"
+      ],
+      "condition": "POS 메뉴 또는 직접 대응 표현"
+    },
+    {
+      "query": "양곰탕",
+      "pos_menu_names": [
+        "양곰탕"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "뚝배기불고기",
+      "pos_menu_names": [
+        "뚝배기불고기"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "소머리곰탕",
+      "pos_menu_names": [
+        "소머리곰탕(구.곤지암곰탕)"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "갈비찜",
+      "pos_menu_names": [
+        "왕갈비찜中",
+        "왕갈비찜大"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "매운갈비찜",
+      "pos_menu_names": [
+        "마왕갈비찜中",
+        "마왕갈비찜大",
+        "매운갈비찜"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "수육",
+      "pos_menu_names": [
+        "돌판수육",
+        "돌판수육(소)",
+        "맛수육"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "수육전골",
+      "pos_menu_names": [
+        "궁중수육전골"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "설렁탕",
+      "pos_menu_names": [
+        "설렁탕"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    },
+    {
+      "query": "갈비탕",
+      "pos_menu_names": [
+        "왕갈비탕"
+      ],
+      "condition": "기존 검토된 POS 메뉴 연결"
+    }
+  ],
+  "targets": [
+    {
+      "place_id": "11627699",
+      "target_store_id": "EVAL-11627699"
+    },
+    {
+      "place_id": "12012595",
+      "target_store_id": "EVAL-12012595"
+    },
+    {
+      "place_id": "17391216",
+      "target_store_id": "EVAL-17391216"
+    }
+  ]
+}

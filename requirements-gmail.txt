@@ -1,0 +1,3 @@
+# 최초 Google 로그인용. 실제 발송은 기존 requests 사용.
+google-auth-oauthlib>=1.2,<2
+markdown-it-py>=3,<5

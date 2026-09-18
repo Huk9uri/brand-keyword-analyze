@@ -46,6 +46,21 @@ _EMPTY_PNG = (
 
 
 @dataclass(frozen=True)
+class RunMetrics:
+    browser_create_count: int
+    browser_close_count: int
+    search_attempt_count: int
+    retry_count: int
+    damaged_restart_count: int
+    profile_change_restart_count: int
+    browser_create_seconds: float
+    browser_close_seconds: float
+    search_seconds: float
+    explicit_wait_seconds: float
+    total_elapsed_seconds: float
+
+
+@dataclass(frozen=True)
 class RunSummary:
     run_id: str
     total_tasks: int
@@ -54,6 +69,7 @@ class RunSummary:
     persistence_failures: int = 0
     aborted: bool = False
     abort_reason: str | None = None
+    metrics: RunMetrics | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status_counts", MappingProxyType(dict(self.status_counts)))
@@ -98,6 +114,7 @@ class KeywordDiscoveryCollector:
         request_interval_seconds: float = 0,
         retry_backoff_seconds: float = 0,
         sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if (
             isinstance(result_limit, bool)
@@ -117,6 +134,7 @@ class KeywordDiscoveryCollector:
         self.request_interval_seconds = request_interval_seconds
         self.retry_backoff_seconds = retry_backoff_seconds
         self._sleep = sleep
+        self._monotonic = monotonic
         self.parser = parser
         self.validator = validator
         self.matcher = matcher
@@ -133,6 +151,9 @@ class KeywordDiscoveryCollector:
         self._session_profile: tuple[object, ...] | None = None
 
     def run(self, tasks: Iterable[SearchTask], run_id: str) -> RunSummary:
+        started_at = self._monotonic()
+        self._metric_counts = Counter()
+        self._metric_seconds = Counter()
         unique_tasks = _deduplicate_tasks(tasks)
         status_counts: Counter[CollectStatus] = Counter()
         persistence_failures = 0
@@ -171,7 +192,7 @@ class KeywordDiscoveryCollector:
                     break
 
                 if final_attempt.session_damaged:
-                    self._discard_session()
+                    self._discard_session('damaged')
 
                 if failure is None:
                     previous_failure = None
@@ -189,6 +210,21 @@ class KeywordDiscoveryCollector:
         finally:
             self._discard_session()
 
+        self._metric_seconds['total_elapsed'] = self._monotonic() - started_at
+        metrics = RunMetrics(
+            browser_create_count=self._metric_counts['browser_create'],
+            browser_close_count=self._metric_counts['browser_close'],
+            search_attempt_count=self._metric_counts['search_attempt'],
+            retry_count=self._metric_counts['retry'],
+            damaged_restart_count=self._metric_counts['damaged_restart'],
+            profile_change_restart_count=self._metric_counts['profile_change_restart'],
+            browser_create_seconds=self._metric_seconds['browser_create'],
+            browser_close_seconds=self._metric_seconds['browser_close'],
+            search_seconds=self._metric_seconds['search'],
+            explicit_wait_seconds=self._metric_seconds['explicit_wait'],
+            total_elapsed_seconds=self._metric_seconds['total_elapsed'],
+        )
+
         return RunSummary(
             run_id=run_id,
             total_tasks=len(unique_tasks),
@@ -197,6 +233,7 @@ class KeywordDiscoveryCollector:
             persistence_failures=persistence_failures,
             aborted=aborted,
             abort_reason=abort_reason,
+            metrics=metrics,
         )
 
     def _run_task(self, task: SearchTask, task_key: str, run_id: str) -> _FinalAttempt:
@@ -209,14 +246,21 @@ class KeywordDiscoveryCollector:
             if attempt_number > 1:
                 delay = max(delay, self.retry_backoff_seconds * 2 ** (attempt_number - 2))
             if delay:
+                before_wait = self._monotonic()
                 self._sleep(delay)
+                self._metric_seconds['explicit_wait'] += self._monotonic() - before_wait
             try:
                 session = self._ensure_session(task)
-                page = session.search(task)
+                before_search = self._monotonic()
+                self._metric_counts['search_attempt'] += 1
+                try:
+                    page = session.search(task)
+                finally:
+                    self._metric_seconds['search'] += self._monotonic() - before_search
             except (SearchStateTimeout, QueryMismatch, SearchPageError, BrowserSessionError) as exc:
                 final_attempt = self._browser_failure(task, task_key, run_id, exc)
                 if final_attempt.session_damaged and attempt_number < total_attempts:
-                    self._discard_session()
+                    self._discard_session('damaged')
                 if final_attempt.retryable and attempt_number < total_attempts:
                     record = RetryRecord(
                         attempt=attempt_number,
@@ -224,6 +268,7 @@ class KeywordDiscoveryCollector:
                         message=final_attempt.snapshot.collect_msg or "",
                     )
                     retry_history.append(record)
+                    self._metric_counts['retry'] += 1
                     self.retry_logger(
                         "retry "
                         f"task_key={task_key} attempt={attempt_number}/{total_attempts} "
@@ -298,13 +343,18 @@ class KeywordDiscoveryCollector:
     def _ensure_session(self, task: SearchTask) -> Any:
         profile = (task.device_type, task.latitude, task.longitude)
         if self._session is not None and self._session_profile != profile:
-            self._discard_session()
+            self._discard_session('profile_change')
         if self._session is None:
-            self._session = self.browser_factory.create(
-                task.device_type,
-                task.latitude,
-                task.longitude,
-            )
+            before_create = self._monotonic()
+            try:
+                self._session = self.browser_factory.create(
+                    task.device_type,
+                    task.latitude,
+                    task.longitude,
+                )
+            finally:
+                self._metric_seconds['browser_create'] += self._monotonic() - before_create
+            self._metric_counts['browser_create'] += 1
             self._session_profile = profile
         return self._session
 
@@ -439,30 +489,39 @@ class KeywordDiscoveryCollector:
         export_path.write_text(self.redact(rendered) + "\n", encoding="utf-8")
         return export_path
 
-    def _discard_session(self) -> None:
+    def _discard_session(self, reason: str | None = None) -> None:
         session = self._session
         self._session = None
         self._session_profile = None
         if session is None:
             return
-        close = getattr(session, "close", None)
-        if callable(close):
-            try:
-                close()
-            except OSError:
-                # 프로필 삭제 재시도가 소진되면 다음 프로필을 만들지 않는다.
-                raise
-            except Exception:
-                pass
-            else:
-                return
-        driver = getattr(session, "driver", None)
-        quit_driver = getattr(driver, "quit", None)
-        if callable(quit_driver):
-            try:
-                quit_driver()
-            except Exception:
-                return
+        if reason == 'damaged':
+            self._metric_counts['damaged_restart'] += 1
+        elif reason == 'profile_change':
+            self._metric_counts['profile_change_restart'] += 1
+        before_close = self._monotonic()
+        self._metric_counts['browser_close'] += 1
+        try:
+            close = getattr(session, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except OSError:
+                    # 프로필 삭제 재시도가 소진되면 다음 프로필을 만들지 않는다.
+                    raise
+                except Exception:
+                    pass
+                else:
+                    return
+            driver = getattr(session, "driver", None)
+            quit_driver = getattr(driver, "quit", None)
+            if callable(quit_driver):
+                try:
+                    quit_driver()
+                except Exception:
+                    return
+        finally:
+            self._metric_seconds['browser_close'] += self._monotonic() - before_close
 
 
 def _deduplicate_tasks(tasks: Iterable[SearchTask]) -> tuple[SearchTask, ...]:

@@ -39,16 +39,26 @@ def _prepare_browser_exit_wait(driver: Any) -> Callable[[], None]:
     kernel.WaitForSingleObject.restype = wintypes.DWORD
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
-    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100001, False, pid)  # SYNCHRONIZE | PROCESS_TERMINATE
     if not handle:
         logging.getLogger(__name__).warning('Chrome 종료 대기 핸들 열기 실패: pid=%s error=%s', pid, ctypes.get_last_error())
-        return lambda: None
+        raise OSError('수집 Chrome 종료 핸들을 확보하지 못했습니다')
 
     def wait() -> None:
         try:
             result = kernel.WaitForSingleObject(handle, 5000)
+            if result == 258:
+                logging.getLogger(__name__).warning('수집 Chrome 종료 시간 초과: pid=%s, 확보한 핸들로 종료 재시도', pid)
+                # 종료 전에 확보한 핸들이므로 PID가 재사용되어도 다른 프로세스를 종료하지 않는다.
+                terminated = kernel.TerminateProcess(handle, 1)
+                result = kernel.WaitForSingleObject(handle, 5000)
+                if not terminated and result != 0:
+                    logging.getLogger(__name__).error('수집 Chrome 종료 실패: pid=%s error=%s', pid, ctypes.get_last_error())
             if result != 0:
                 logging.getLogger(__name__).warning('Chrome 종료 대기 미완료: pid=%s result=%s', pid, result)
+                raise OSError('수집 Chrome 종료가 확인되지 않아 프로필 삭제를 중단합니다')
         finally:
             kernel.CloseHandle(handle)
     return wait
@@ -73,6 +83,30 @@ def _quit_and_wait(driver: Any) -> None:
         driver.quit()
     finally:
         wait()
+
+
+_pending_profiles: list[TemporaryDirectory] = []
+
+
+def _retry_pending_profiles() -> None:
+    for profile in list(_pending_profiles):
+        try:
+            profile.cleanup()
+        except OSError:
+            continue
+        _pending_profiles.remove(profile)
+        logging.getLogger(__name__).info('지연 프로필 정리 완료: %s', profile.name)
+
+
+def _cleanup_or_defer(profile: TemporaryDirectory) -> None:
+    try:
+        _cleanup_profile(profile)
+    except OSError:
+        _retry_pending_profiles()
+        if len(_pending_profiles) >= 3:
+            raise OSError('잠긴 프로필 지연 한도 3개 초과: '+profile.name)
+        _pending_profiles.append(profile)
+        logging.getLogger(__name__).warning('프로필 삭제 지연: %s (대기 %s/3)', profile.name, len(_pending_profiles))
 
 
 MOBILE_USER_AGENT = (
@@ -206,11 +240,17 @@ class BrowserSession:
         self._last_html = ""
 
     def close(self) -> None:
+        cleanup_allowed = True
         try:
             _quit_and_wait(self.driver)
+        except OSError:
+            cleanup_allowed = False
+            raise
         finally:
-            if self._profile is not None:
-                _cleanup_profile(self._profile)
+            if self._profile is not None and cleanup_allowed:
+                _cleanup_or_defer(self._profile)
+                self._profile = None
+            _retry_pending_profiles()
 
     def search(self, task: SearchTask) -> SearchPage:
         search_url = _build_search_url(task)
@@ -445,6 +485,9 @@ class BrowserFactory:
         latitude: float | None,
         longitude: float | None,
     ) -> BrowserSession:
+        _retry_pending_profiles()
+        if len(_pending_profiles) >= 3:
+            raise OSError('잠긴 프로필 3개가 남아 추가 브라우저 생성을 중단합니다')
         options = Options()
         if self.headless:
             options.add_argument("--headless=new")
@@ -525,9 +568,7 @@ def _create_uc_driver(*, options: Options, user_data_dir: str) -> Any:
 
 def _chrome_major(executable: str) -> int:
     if sys.platform == 'win32':
-        escaped = str(Path(executable).resolve()).replace("'", "''")
-        command = ['powershell.exe', '-NoProfile', '-Command',
-                   f"(Get-Item -LiteralPath '{escaped}').VersionInfo.ProductVersion"]
+        return _windows_chrome_major(executable)
     else:
         command = [executable, '--version']
     result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=10)
@@ -535,6 +576,33 @@ def _chrome_major(executable: str) -> int:
     if not match:
         raise RuntimeError('Chrome 버전을 확인할 수 없습니다')
     return int(match.group(1))
+
+
+def _windows_chrome_major(executable: str) -> int:
+    """PowerShell 시작 지연 없이 실행 파일의 제품 버전 리소스를 읽는다."""
+    import ctypes
+    from ctypes import wintypes
+    api=ctypes.WinDLL('version',use_last_error=True)
+    api.GetFileVersionInfoSizeW.argtypes=[wintypes.LPCWSTR,ctypes.POINTER(wintypes.DWORD)]
+    api.GetFileVersionInfoSizeW.restype=wintypes.DWORD
+    api.GetFileVersionInfoW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p]
+    api.GetFileVersionInfoW.restype=wintypes.BOOL
+    api.VerQueryValueW.argtypes=[ctypes.c_void_p,wintypes.LPCWSTR,ctypes.POINTER(ctypes.c_void_p),ctypes.POINTER(wintypes.UINT)]
+    api.VerQueryValueW.restype=wintypes.BOOL
+    filename=str(Path(executable).resolve())
+    ignored=wintypes.DWORD()
+    size=api.GetFileVersionInfoSizeW(filename,ctypes.byref(ignored))
+    if not size:raise RuntimeError('Chrome 버전 리소스를 읽을 수 없습니다')
+    buffer=ctypes.create_string_buffer(size)
+    if not api.GetFileVersionInfoW(filename,0,size,buffer):raise RuntimeError('Chrome 버전 정보를 읽을 수 없습니다')
+    pointer=ctypes.c_void_p();length=wintypes.UINT()
+    if not api.VerQueryValueW(buffer,'\\',ctypes.byref(pointer),ctypes.byref(length)) or length.value<52:
+        raise RuntimeError('Chrome 버전 정보가 올바르지 않습니다')
+    fields=ctypes.cast(pointer,ctypes.POINTER(wintypes.DWORD))
+    if fields[0]!=0xFEEF04BD:raise RuntimeError('Chrome 버전 서명이 올바르지 않습니다')
+    major=fields[4]>>16  # VS_FIXEDFILEINFO.dwProductVersionMS
+    if major<=0:raise RuntimeError('Chrome 제품 버전을 확인할 수 없습니다')
+    return major
 
 
 def _query_requires_location_activation(task: SearchTask) -> bool:

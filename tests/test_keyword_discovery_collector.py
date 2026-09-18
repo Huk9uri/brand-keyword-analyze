@@ -85,6 +85,49 @@ def test_request_pacing_and_retry_backoff(tmp_path):
     instance._sleep = sleeps.append
     instance.run([task(), task(2, query='another query')], 'paced')
     assert sleeps == [30, 60, 120, 30]
+
+
+def test_monotonic_metrics_separate_browser_search_wait_and_total_time(tmp_path):
+    class Timer:
+        value = 0.0
+
+        def advance(self, seconds):
+            self.value += seconds
+
+    timer = Timer()
+
+    class TimedSession(FakeSession):
+        def search(self, search_task):
+            timer.advance(3)
+            return super().search(search_task)
+
+        def close(self):
+            timer.advance(4)
+
+    session = TimedSession([success_page(), success_page()])
+    instance, factory, _ = collector(tmp_path, [session])
+    original_create = factory.create
+
+    def create(*args):
+        timer.advance(2)
+        return original_create(*args)
+
+    factory.create = create
+    instance.request_interval_seconds = 5
+    instance._sleep = timer.advance
+    instance._monotonic = lambda: timer.value
+
+    summary = instance.run([task(), task(2, query='another query')], 'measured')
+
+    assert summary.metrics.browser_create_count == 1
+    assert summary.metrics.browser_close_count == 1
+    assert summary.metrics.search_attempt_count == 2
+    assert summary.metrics.retry_count == 0
+    assert summary.metrics.browser_create_seconds == 2
+    assert summary.metrics.browser_close_seconds == 4
+    assert summary.metrics.search_seconds == 6
+    assert summary.metrics.explicit_wait_seconds == 10
+    assert summary.metrics.total_elapsed_seconds == 22
 SEARCH_URL = "https://m.search.naver.com/search.naver?query=%EC%84%A0%EB%A6%89%EC%97%AD+%EA%B5%AD%EB%B0%A5"
 
 
@@ -407,12 +450,25 @@ def test_browser_session_damage_closes_and_recreates_session_before_retry(tmp_pa
     replacement = FakeSession([success_page()])
     instance, factory, repository = collector(tmp_path, [damaged, replacement])
 
-    instance.run([task()], "run-recreated")
+    summary = instance.run([task()], "run-recreated")
 
     assert len(factory.create_calls) == 2
     assert damaged.driver.quit_calls == 1
     assert replacement.driver.quit_calls == 1
     assert repository.saved[0][0].collect_status is CollectStatus.SUCCESS
+    assert summary.metrics.damaged_restart_count == 1
+
+
+def test_profile_change_restart_is_counted_separately(tmp_path: Path):
+    first = FakeSession([success_page()])
+    second = FakeSession([success_page()])
+    instance, factory, _ = collector(tmp_path, [first, second])
+
+    summary = instance.run([task(), task(2, latitude=37.6)], 'profile-change')
+
+    assert len(factory.create_calls) == 2
+    assert summary.metrics.profile_change_restart_count == 1
+    assert summary.metrics.damaged_restart_count == 0
 
 
 def test_session_close_failure_falls_back_to_driver_quit(tmp_path: Path):
